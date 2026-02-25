@@ -188,7 +188,12 @@ export function upsertClients(clients: ClientProfile[]) {
       is_new=excluded.is_new;
   `);
   const trx = db.transaction((items: ClientProfile[]) => {
-    items.forEach((c) => stmt.run(c));
+    items.forEach((c) =>
+      stmt.run({
+        ...c,
+        isNew: c.isNew ? 1 : 0,
+      }),
+    );
   });
   trx(clients);
 }
