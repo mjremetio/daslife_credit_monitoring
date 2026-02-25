@@ -1,6 +1,7 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 
 interface AuthContextValue {
   user: { name: string } | null;
@@ -11,16 +12,19 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<{ name: string } | null>(() => {
-    if (typeof window === "undefined") return null;
+  const [user, setUser] = useState<{ name: string } | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     const saved = localStorage.getItem("dlcm_user");
-    if (!saved) return null;
-    try {
-      return JSON.parse(saved);
-    } catch {
-      return null;
+    if (saved) {
+      try {
+        setUser(JSON.parse(saved));
+      } catch {
+        setUser(null);
+      }
     }
-  });
+  }, []);
 
   const login = async (username: string, password: string) => {
     // Simple demo auth; replace with real identity provider later

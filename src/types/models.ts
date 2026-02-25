@@ -22,6 +22,8 @@ export type IssueRecord = {
   messageDate: string | null;
   resolved: boolean;
   note: string;
+  round?: number | null;
+  priority?: "Low" | "Medium" | "High";
 };
 
 export type CreditMonitoringRecord = {
@@ -32,6 +34,8 @@ export type CreditMonitoringRecord = {
   messageSent: boolean;
   messageDate: string | null;
   resolved: boolean;
+  round?: number | null;
+  priority?: "Low" | "Medium" | "High";
 };
 
 export type DocStatus = "pending" | "sent" | "received" | "complete";
@@ -46,12 +50,17 @@ export type DocRecord = {
   messageDate: string | null;
   note: string;
   category: DocCategory;
+  round?: number | null;
+  priority?: "Low" | "Medium" | "High";
 };
 
 export type FullClient = ClientProfile & {
   issues: IssueRecord[];
   docs: DocRecord[];
   cmIssues: CreditMonitoringRecord[];
+  disputes?: DisputeRecord[];
+  rounds?: RoundHistory[];
+  messages?: MessageRecord[];
 };
 
 export type User = {
@@ -60,4 +69,39 @@ export type User = {
   email: string;
   role: string;
   status: "Active" | "Inactive";
+};
+
+export type DisputeStatus = "Draft" | "Sent" | "Responded" | "Closed";
+
+export type DisputeRecord = {
+  id: string;
+  clientId: string;
+  round: number;
+  bureau: "Experian" | "TransUnion" | "Equifax" | string;
+  status: DisputeStatus;
+  sentDate: string | null;
+  dueDate: string | null;
+  outcome: string;
+  priority: "Low" | "Medium" | "High";
+  notes: string;
+  blockerFlags: string;
+};
+
+export type RoundHistory = {
+  id: string;
+  clientId: string;
+  round: number;
+  processedDate: string | null;
+  nextDueDate: string | null;
+  statusNote: string;
+};
+
+export type MessageRecord = {
+  id: string;
+  clientId: string;
+  disputeId?: string | null;
+  templateKey: string;
+  channel: string;
+  sentAt: string;
+  contentPreview: string;
 };

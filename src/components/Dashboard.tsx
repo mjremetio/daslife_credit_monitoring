@@ -35,8 +35,11 @@ import {
   deleteDoc,
   updateCmIssue,
   deleteCmIssue,
+  addDispute,
+  updateDispute,
+  deleteDispute,
 } from "@/lib/api-client";
-import { FullClient, DocRecord, CreditMonitoringRecord, ClientProfile, User, IssueRecord } from "@/types/models";
+import { FullClient, DocRecord, CreditMonitoringRecord, ClientProfile, User, IssueRecord, DisputeRecord, DisputeStatus } from "@/types/models";
 import { exportCsv, exportXls, exportRowsCsv, exportRowsXls } from "@/lib/exporters";
 import { Modal } from "./Modal";
 import {
@@ -50,9 +53,17 @@ const today = new Date();
 
 const formatDate = (value: string | null) => (value ? new Date(value + "T00:00:00").toLocaleDateString() : "—");
 
-const isOverdue = (c: FullClient) => c.nextDueDate && parseISO(c.nextDueDate) < today;
 const dueWithin = (c: FullClient, days: number) =>
   c.nextDueDate && isWithinInterval(parseISO(c.nextDueDate), { start: today, end: addDays(today, days) });
+
+const blockersForClient = (c: FullClient) => {
+  const blockers: string[] = [];
+  if (c.issues.some((i) => !i.resolved)) blockers.push("Unresolved issues");
+  if (c.docs.some((d) => d.status === "pending" || d.status === "sent")) blockers.push("Docs pending/sent");
+  if (c.cmIssues.some((cm) => !cm.resolved)) blockers.push("Credit monitoring open");
+  if (c.nextDueDate && new Date(c.nextDueDate) > new Date()) blockers.push("Not due yet");
+  return blockers;
+};
 
 export function Dashboard({ initialClients, initialUsers }: { initialClients: FullClient[]; initialUsers: User[] }) {
   const [clients, setClients] = useState<FullClient[]>(initialClients);
@@ -60,14 +71,14 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
   const [search, setSearch] = useState("");
   const [disputerFilter, setDisputerFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [activeTab, setActiveTab] = useState<"overview" | "clients" | "ready" | "issues" | "docs" | "cm" | "users">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "clients" | "ready" | "disputes" | "issues" | "docs" | "cm" | "users">("overview");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<FullClient | null>(null);
   const [clientForm, setClientForm] = useState<{ name: string; disputer: string; status: ClientProfile["status"]; round: number }>({
     name: "",
-    disputer: "",
+    disputer: "Annabel",
     status: "Active",
     round: 1,
   });
@@ -120,6 +131,34 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
   const [cmPage, setCmPage] = useState(0);
   const [cmPageSize, setCmPageSize] = useState(10);
 
+  const [disputeModalOpen, setDisputeModalOpen] = useState(false);
+  const [editingDispute, setEditingDispute] = useState<DisputeRecord | null>(null);
+  const [disputeForm, setDisputeForm] = useState<{
+    clientId: string;
+    bureau: string;
+    status: DisputeStatus;
+    round: number;
+    priority: "Low" | "Medium" | "High";
+    sentDate: string | null;
+    dueDate: string | null;
+    notes: string;
+    blockerFlags: string;
+  }>({
+    clientId: initialClients[0]?.id ?? "",
+    bureau: "Experian",
+    status: "Draft",
+    round: 1,
+    priority: "Medium",
+    sentDate: null,
+    dueDate: null,
+    notes: "",
+    blockerFlags: "",
+  });
+  const [disputeSearch, setDisputeSearch] = useState("");
+  const [disputeStatusFilter, setDisputeStatusFilter] = useState<"all" | DisputeStatus>("all");
+  const [disputePage, setDisputePage] = useState(0);
+  const [disputePageSize, setDisputePageSize] = useState(10);
+
   const [userSearch, setUserSearch] = useState("");
   const [userStatusFilter, setUserStatusFilter] = useState<"all" | User["status"]>("all");
   const [userPage, setUserPage] = useState(0);
@@ -128,6 +167,29 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
   const [readySearch, setReadySearch] = useState("");
   const [readyPage, setReadyPage] = useState(0);
   const [readyPageSize, setReadyPageSize] = useState(10);
+  const [readySort, setReadySort] = useState<{ field: "due" | "name" | "round"; dir: "asc" | "desc" }>({ field: "due", dir: "asc" });
+
+  const [issueSort, setIssueSort] = useState<{ field: "client" | "issue" | "messageDate" | "resolved"; dir: "asc" | "desc" }>({
+    field: "client",
+    dir: "asc",
+  });
+
+  const [docsSort, setDocsSort] = useState<{ field: "client" | "docType" | "status" | "category"; dir: "asc" | "desc" }>({
+    field: "client",
+    dir: "asc",
+  });
+
+  const [cmSort, setCmSort] = useState<{ field: "client" | "platform" | "issue" | "messageDate"; dir: "asc" | "desc" }>({
+    field: "client",
+    dir: "asc",
+  });
+
+  const [userSort, setUserSort] = useState<{ field: "name" | "status"; dir: "asc" | "desc" }>({ field: "name", dir: "asc" });
+
+  const [disputeSort, setDisputeSort] = useState<{ field: "due" | "status" | "client"; dir: "asc" | "desc" }>({
+    field: "due",
+    dir: "asc",
+  });
 
   const refresh = async () => {
     setBusy(true);
@@ -147,12 +209,20 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
   }, []);
 
   useEffect(() => {
+    if (!clientForm.disputer && users.length > 0) {
+      const preferred = users.find((u) => u.name.toLowerCase().includes("annabel")) || users[0];
+      setClientForm((prev) => ({ ...prev, disputer: preferred?.name || prev.disputer }));
+    }
+  }, [users, clientForm.disputer]);
+
+  useEffect(() => {
     if (clients.length > 0) {
       if (!issueForm.clientId) setIssueForm((prev) => ({ ...prev, clientId: clients[0].id }));
       if (!docForm.clientId) setDocForm((prev) => ({ ...prev, clientId: clients[0].id }));
       if (!cmForm.clientId) setCmForm((prev) => ({ ...prev, clientId: clients[0].id }));
+      if (!disputeForm.clientId) setDisputeForm((prev) => ({ ...prev, clientId: clients[0].id, round: clients[0].round || 1 }));
     }
-  }, [clients, issueForm.clientId, docForm.clientId, cmForm.clientId]);
+  }, [clients, issueForm.clientId, docForm.clientId, cmForm.clientId, disputeForm.clientId]);
 
   const filtered = useMemo(() => {
     const term = search.toLowerCase();
@@ -166,7 +236,7 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
   }, [clients, search, disputerFilter, statusFilter]);
 
   const counters = useMemo(() => {
-    const ready = clients.filter((c) => c.status === "Active" && !c.issues.some((i) => !i.resolved) && isOverdue(c)).length;
+    const ready = clients.filter((c) => c.status === "Active" && blockersForClient(c).length === 0).length;
     const withIssues = clients.filter((c) => c.issues.some((i) => !i.resolved)).length;
     const docsPending = clients.filter((c) => c.docs.some((d) => d.status === "pending" || d.status === "sent")).length;
     const cmIssues = clients.filter((c) => c.cmIssues.some((cm) => !cm.resolved)).length;
@@ -186,8 +256,13 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
     () =>
       clients
         .filter((c) => c.status === "Active")
-        .sort((a, b) => (a.nextDueDate || "9999-99-99").localeCompare(b.nextDueDate || "9999-99-99")),
-    [clients],
+        .sort((a, b) => {
+          const dir = readySort.dir === "asc" ? 1 : -1;
+          if (readySort.field === "name") return dir * a.name.localeCompare(b.name);
+          if (readySort.field === "round") return dir * ((a.round || 0) - (b.round || 0));
+          return dir * (a.nextDueDate || "9999-99-99").localeCompare(b.nextDueDate || "9999-99-99");
+        }),
+    [clients, readySort],
   );
 
   const issues = useMemo(
@@ -205,6 +280,11 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
     [clients],
   );
 
+  const disputes = useMemo(
+    () => clients.flatMap((c) => (c.disputes || []).map((d) => ({ client: c, dispute: d }))),
+    [clients],
+  );
+
   const filteredIssues = useMemo(() => {
     const searchTerm = issueSearch.toLowerCase();
     return issues
@@ -217,8 +297,32 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
           issueFilter === "all" ? true : issueFilter === "resolved" ? issue.resolved : !issue.resolved;
         return matchesSearch && matchesResolved;
       })
-      .sort((a, b) => (a.client.name || "").localeCompare(b.client.name || ""));
-  }, [issues, issueSearch, issueFilter]);
+      .sort((a, b) => {
+        const dir = issueSort.dir === "asc" ? 1 : -1;
+        if (issueSort.field === "client") return dir * a.client.name.localeCompare(b.client.name);
+        if (issueSort.field === "issue") return dir * (a.issue.issueType || "").localeCompare(b.issue.issueType || "");
+        if (issueSort.field === "resolved") return dir * Number(a.issue.resolved) - Number(b.issue.resolved);
+        return dir * (a.issue.messageDate || "").localeCompare(b.issue.messageDate || "");
+      });
+  }, [issues, issueSearch, issueFilter, issueSort]);
+
+  const filteredDisputes = useMemo(() => {
+    const term = disputeSearch.toLowerCase();
+    const rows = disputes.filter(({ client, dispute }) => {
+      const matchesTerm =
+        client.name.toLowerCase().includes(term) ||
+        (dispute.bureau || "").toLowerCase().includes(term) ||
+        (dispute.notes || "").toLowerCase().includes(term);
+      const matchesStatus = disputeStatusFilter === "all" ? true : dispute.status === disputeStatusFilter;
+      return matchesTerm && matchesStatus;
+    });
+    return rows.sort((a, b) => {
+      const dir = disputeSort.dir === "asc" ? 1 : -1;
+      if (disputeSort.field === "client") return dir * a.client.name.localeCompare(b.client.name);
+      if (disputeSort.field === "status") return dir * a.dispute.status.localeCompare(b.dispute.status);
+      return dir * (a.dispute.dueDate || "").localeCompare(b.dispute.dueDate || "");
+    });
+  }, [disputes, disputeSearch, disputeStatusFilter, disputeSort]);
 
   const filteredCm = useMemo(() => {
     const term = cmSearch.toLowerCase();
@@ -231,8 +335,14 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
         const matchesResolved = cmResolvedFilter === "all" ? true : cmResolvedFilter === "resolved" ? cm.resolved : !cm.resolved;
         return matchesSearch && matchesResolved;
       })
-      .sort((a, b) => (a.client.name || "").localeCompare(b.client.name || ""));
-  }, [cmIssues, cmSearch, cmResolvedFilter]);
+      .sort((a, b) => {
+        const dir = cmSort.dir === "asc" ? 1 : -1;
+        if (cmSort.field === "client") return dir * a.client.name.localeCompare(b.client.name);
+        if (cmSort.field === "platform") return dir * (a.cm.platform || "").localeCompare(b.cm.platform || "");
+        if (cmSort.field === "issue") return dir * (a.cm.issue || "").localeCompare(b.cm.issue || "");
+        return dir * (a.cm.messageDate || "").localeCompare(b.cm.messageDate || "");
+      });
+  }, [cmIssues, cmSearch, cmResolvedFilter, cmSort]);
 
   const filteredUsers = useMemo(() => {
     const term = userSearch.toLowerCase();
@@ -242,8 +352,12 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
         const matchesStatus = userStatusFilter === "all" ? true : u.status === userStatusFilter;
         return matchesSearch && matchesStatus;
       })
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [users, userSearch, userStatusFilter]);
+      .sort((a, b) => {
+        const dir = userSort.dir === "asc" ? 1 : -1;
+        if (userSort.field === "name") return dir * a.name.localeCompare(b.name);
+        return dir * a.status.localeCompare(b.status);
+      });
+  }, [users, userSearch, userStatusFilter, userSort]);
 
   const filteredReady = useMemo(() => {
     const term = readySearch.toLowerCase();
@@ -415,6 +529,40 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
     setBusy(false);
   };
 
+  const handleSaveDispute = async () => {
+    if (!disputeForm.clientId) return;
+    setBusy(true);
+    const payload: DisputeRecord = {
+      id: editingDispute?.id || "",
+      clientId: disputeForm.clientId,
+      round: disputeForm.round,
+      bureau: disputeForm.bureau,
+      status: disputeForm.status,
+      sentDate: disputeForm.sentDate,
+      dueDate: disputeForm.dueDate,
+      outcome: editingDispute?.outcome || "",
+      priority: disputeForm.priority,
+      notes: disputeForm.notes,
+      blockerFlags: disputeForm.blockerFlags,
+    };
+    if (editingDispute) {
+      await updateDispute(payload);
+    } else {
+      await addDispute({ ...payload, id: undefined });
+    }
+    setDisputeModalOpen(false);
+    setEditingDispute(null);
+    await refresh();
+    setBusy(false);
+  };
+
+  const handleDeleteDispute = async (id: string) => {
+    setBusy(true);
+    await deleteDispute(id);
+    await refresh();
+    setBusy(false);
+  };
+
   const handleSaveUser = async () => {
     if (!userForm.name.trim()) return;
     setBusy(true);
@@ -445,6 +593,7 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
           { id: "overview", label: "Dashboard", icon: LayoutDashboard },
           { id: "clients", label: "Client Management", icon: ClipboardList },
           { id: "ready", label: "Ready to Process", icon: ListChecks },
+          { id: "disputes", label: "Disputes", icon: ListChecks },
           { id: "issues", label: "Dues with Issues", icon: Bug },
           { id: "docs", label: "Document Trackers", icon: FileText },
           { id: "cm", label: "Credit Monitoring", icon: Shield },
@@ -592,11 +741,42 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
             <table className="min-w-full divide-y divide-slate-200">
               <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
-                  <th className="px-3 py-2 text-left">Client</th>
+                  <th
+                    className="px-3 py-2 text-left cursor-pointer"
+                    onClick={() =>
+                      setReadySort((prev) => ({
+                        field: "name",
+                        dir: prev.field === "name" && prev.dir === "asc" ? "desc" : "asc",
+                      }))
+                    }
+                  >
+                    Client {readySort.field === "name" ? (readySort.dir === "asc" ? "↑" : "↓") : ""}
+                  </th>
                   <th className="px-3 py-2 text-left">New/Old</th>
-                  <th className="px-3 py-2 text-left">Due</th>
+                  <th
+                    className="px-3 py-2 text-left cursor-pointer"
+                    onClick={() =>
+                      setReadySort((prev) => ({
+                        field: "due",
+                        dir: prev.field === "due" && prev.dir === "asc" ? "desc" : "asc",
+                      }))
+                    }
+                  >
+                    Due {readySort.field === "due" ? (readySort.dir === "asc" ? "↑" : "↓") : ""}
+                  </th>
                   <th className="px-3 py-2 text-left">Disputer</th>
-                  <th className="px-3 py-2 text-left">Round</th>
+                  <th
+                    className="px-3 py-2 text-left cursor-pointer"
+                    onClick={() =>
+                      setReadySort((prev) => ({
+                        field: "round",
+                        dir: prev.field === "round" && prev.dir === "asc" ? "desc" : "asc",
+                      }))
+                    }
+                  >
+                    Round {readySort.field === "round" ? (readySort.dir === "asc" ? "↑" : "↓") : ""}
+                  </th>
+                  <th className="px-3 py-2 text-left">Ready</th>
                   <th className="px-3 py-2" />
                 </tr>
               </thead>
@@ -608,13 +788,44 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
                     <td className="px-3 py-2 text-sm text-slate-700">{formatDate(c.nextDueDate)}</td>
                     <td className="px-3 py-2 text-sm text-slate-700">{c.disputer || ""}</td>
                     <td className="px-3 py-2 text-sm text-slate-700">{c.round}</td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-3 py-2 text-sm">
+                      {blockersForClient(c).length === 0 ? (
+                        <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">Ready</span>
+                      ) : (
+                        <div className="flex flex-col text-xs text-amber-700">
+                          <span className="rounded-full bg-amber-50 px-2 py-1 font-semibold">Blocked</span>
+                          <span>{blockersForClient(c)[0]}</span>
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right space-y-2">
                       <button
                         className="inline-flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-emerald-600"
                         onClick={() => handleProcessed(c.id)}
                         disabled={busy}
                       >
                         <Check size={14} /> Mark Processed
+                      </button>
+                      <button
+                        className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-slate-800 disabled:opacity-50"
+                        disabled={blockersForClient(c).length > 0 || busy}
+                        onClick={() => {
+                          setEditingDispute(null);
+                          setDisputeForm({
+                            clientId: c.id,
+                            bureau: "Experian",
+                            status: "Draft",
+                            round: c.round || 1,
+                            priority: "Medium",
+                            sentDate: null,
+                            dueDate: c.nextDueDate || null,
+                            notes: "",
+                            blockerFlags: blockersForClient(c).join(", "),
+                          });
+                          setDisputeModalOpen(true);
+                        }}
+                      >
+                        Start Dispute
                       </button>
                     </td>
                   </tr>
@@ -662,6 +873,235 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
                     setReadyPage((p) => (p + 1 < Math.ceil(filteredReady.length / readyPageSize) ? p + 1 : p))
                   }
                   disabled={readyPage + 1 >= Math.ceil(filteredReady.length / readyPageSize)}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Disputes */}
+      {activeTab === "disputes" && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+          <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Disputes</h2>
+              <p className="text-xs text-slate-500">Start disputes when clients are ready; track status by bureau & round.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <input
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                placeholder="Search disputes..."
+                value={disputeSearch}
+                onChange={(e) => {
+                  setDisputeSearch(e.target.value);
+                  setDisputePage(0);
+                }}
+              />
+              <select
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                value={disputeStatusFilter}
+                onChange={(e) => {
+                  setDisputeStatusFilter(e.target.value as typeof disputeStatusFilter);
+                  setDisputePage(0);
+                }}
+              >
+                <option value="all">Any status</option>
+                {["Draft", "Sent", "Responded", "Closed"].map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                onClick={() =>
+                  exportRowsCsv(
+                    filteredDisputes.map(({ client, dispute }) => ({
+                      client: client.name,
+                      round: dispute.round,
+                      bureau: dispute.bureau,
+                      status: dispute.status,
+                      sentDate: dispute.sentDate,
+                      dueDate: dispute.dueDate,
+                      priority: dispute.priority,
+                    })),
+                    "disputes.csv",
+                  )
+                }
+              >
+                Export CSV
+              </button>
+              <button
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                onClick={() =>
+                  exportRowsXls(
+                    filteredDisputes.map(({ client, dispute }) => ({
+                      client: client.name,
+                      round: dispute.round,
+                      bureau: dispute.bureau,
+                      status: dispute.status,
+                      sentDate: dispute.sentDate,
+                      dueDate: dispute.dueDate,
+                      priority: dispute.priority,
+                    })),
+                    "disputes.xlsx",
+                    "Disputes",
+                  )
+                }
+              >
+                Export XLS
+              </button>
+              <button
+                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800"
+                onClick={() => {
+                  const c = clients[0];
+                  setEditingDispute(null);
+                  setDisputeForm({
+                    clientId: c?.id ?? "",
+                    bureau: "Experian",
+                    status: "Draft",
+                    round: c?.round || 1,
+                    priority: "Medium",
+                    sentDate: null,
+                    dueDate: c?.nextDueDate || null,
+                    notes: "",
+                    blockerFlags: c ? blockersForClient(c).join(", ") : "",
+                  });
+                  setDisputeModalOpen(true);
+                }}
+              >
+                + Add Dispute
+              </button>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th
+                    className="px-3 py-2 text-left cursor-pointer"
+                    onClick={() =>
+                      setDisputeSort((prev) => ({ field: "client", dir: prev.field === "client" && prev.dir === "asc" ? "desc" : "asc" }))
+                    }
+                  >
+                    Client {disputeSort.field === "client" ? (disputeSort.dir === "asc" ? "↑" : "↓") : ""}
+                  </th>
+                  <th className="px-3 py-2 text-left">Round</th>
+                  <th className="px-3 py-2 text-left">Bureau</th>
+                  <th
+                    className="px-3 py-2 text-left cursor-pointer"
+                    onClick={() =>
+                      setDisputeSort((prev) => ({ field: "status", dir: prev.field === "status" && prev.dir === "asc" ? "desc" : "asc" }))
+                    }
+                  >
+                    Status {disputeSort.field === "status" ? (disputeSort.dir === "asc" ? "↑" : "↓") : ""}
+                  </th>
+                  <th
+                    className="px-3 py-2 text-left cursor-pointer"
+                    onClick={() =>
+                      setDisputeSort((prev) => ({ field: "due", dir: prev.field === "due" && prev.dir === "asc" ? "desc" : "asc" }))
+                    }
+                  >
+                    Due {disputeSort.field === "due" ? (disputeSort.dir === "asc" ? "↑" : "↓") : ""}
+                  </th>
+                  <th className="px-3 py-2 text-left">Priority</th>
+                  <th className="px-3 py-2 text-left">Notes</th>
+                  <th className="px-3 py-2 text-left">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {paginate(filteredDisputes, disputePage, disputePageSize).map(({ client, dispute }) => {
+                  const blockerSummary = blockersForClient(client).join(", ");
+                  return (
+                    <tr key={dispute.id}>
+                      <td className="px-3 py-2 font-semibold text-slate-900">{client.name}</td>
+                      <td className="px-3 py-2 text-slate-700">Round {dispute.round}</td>
+                      <td className="px-3 py-2 text-slate-700">{dispute.bureau}</td>
+                      <td className="px-3 py-2">
+                        <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">{dispute.status}</span>
+                      </td>
+                      <td className="px-3 py-2 text-slate-700">{formatDate(dispute.dueDate)}</td>
+                      <td className="px-3 py-2 text-slate-700">{dispute.priority}</td>
+                      <td className="px-3 py-2 text-slate-700 line-clamp-2">{dispute.notes || blockerSummary || "—"}</td>
+                      <td className="px-3 py-2">
+                        <div className="flex gap-2">
+                          <button
+                            className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white"
+                            onClick={() => {
+                              setEditingDispute(dispute);
+                              setDisputeForm({
+                                clientId: client.id,
+                                bureau: dispute.bureau,
+                                status: dispute.status,
+                                round: dispute.round,
+                                priority: dispute.priority,
+                                sentDate: dispute.sentDate,
+                                dueDate: dispute.dueDate,
+                                notes: dispute.notes,
+                                blockerFlags: dispute.blockerFlags,
+                              });
+                              setDisputeModalOpen(true);
+                            }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className="rounded-full bg-rose-500 px-3 py-1 text-xs font-semibold text-white"
+                            onClick={() => handleDeleteDispute(dispute.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filteredDisputes.length === 0 && (
+                  <tr>
+                    <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={8}>
+                      No disputes yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center justify-between text-sm text-slate-600">
+            <div>
+              Page {disputePage + 1} of {Math.max(1, Math.ceil(filteredDisputes.length / disputePageSize))}
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                value={disputePageSize}
+                onChange={(e) => {
+                  setDisputePageSize(Number(e.target.value));
+                  setDisputePage(0);
+                }}
+              >
+                {[10, 20, 50].map((size) => (
+                  <option key={size} value={size}>
+                    {size} / page
+                  </option>
+                ))}
+              </select>
+              <div className="flex items-center gap-1">
+                <button
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50"
+                  onClick={() => setDisputePage((p) => Math.max(0, p - 1))}
+                  disabled={disputePage === 0}
+                >
+                  Prev
+                </button>
+                <button
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50"
+                  onClick={() =>
+                    setDisputePage((p) => (p + 1 < Math.ceil(filteredDisputes.length / disputePageSize) ? p + 1 : p))
+                  }
+                  disabled={disputePage + 1 >= Math.ceil(filteredDisputes.length / disputePageSize)}
                 >
                   Next
                 </button>
@@ -761,10 +1201,44 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
             <table className="min-w-full divide-y divide-slate-200 text-sm">
               <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
-                  <th className="px-3 py-2 text-left">Client</th>
-                  <th className="px-3 py-2 text-left">Issue</th>
-                  <th className="px-3 py-2 text-left">Message</th>
-                  <th className="px-3 py-2 text-left">Resolved</th>
+                  <th
+                    className="px-3 py-2 text-left cursor-pointer"
+                    onClick={() =>
+                      setIssueSort((prev) => ({ field: "client", dir: prev.field === "client" && prev.dir === "asc" ? "desc" : "asc" }))
+                    }
+                  >
+                    Client {issueSort.field === "client" ? (issueSort.dir === "asc" ? "↑" : "↓") : ""}
+                  </th>
+                  <th
+                    className="px-3 py-2 text-left cursor-pointer"
+                    onClick={() =>
+                      setIssueSort((prev) => ({ field: "issue", dir: prev.field === "issue" && prev.dir === "asc" ? "desc" : "asc" }))
+                    }
+                  >
+                    Issue {issueSort.field === "issue" ? (issueSort.dir === "asc" ? "↑" : "↓") : ""}
+                  </th>
+                  <th
+                    className="px-3 py-2 text-left cursor-pointer"
+                    onClick={() =>
+                      setIssueSort((prev) => ({
+                        field: "messageDate",
+                        dir: prev.field === "messageDate" && prev.dir === "asc" ? "desc" : "asc",
+                      }))
+                    }
+                  >
+                    Message {issueSort.field === "messageDate" ? (issueSort.dir === "asc" ? "↑" : "↓") : ""}
+                  </th>
+                  <th
+                    className="px-3 py-2 text-left cursor-pointer"
+                    onClick={() =>
+                      setIssueSort((prev) => ({
+                        field: "resolved",
+                        dir: prev.field === "resolved" && prev.dir === "asc" ? "desc" : "asc",
+                      }))
+                    }
+                  >
+                    Resolved {issueSort.field === "resolved" ? (issueSort.dir === "asc" ? "↑" : "↓") : ""}
+                  </th>
                   <th className="px-3 py-2 text-left">Actions</th>
                 </tr>
               </thead>
@@ -904,6 +1378,8 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
             setDocModalOpen(true);
           }}
           onDelete={handleDeleteDoc}
+          docsSort={docsSort}
+          setDocsSort={setDocsSort}
         />
       )}
 
@@ -945,6 +1421,8 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
           setPage={setCmPage}
           pageSize={cmPageSize}
           setPageSize={setCmPageSize}
+          cmSort={cmSort}
+          setCmSort={setCmSort}
         />
       )}
 
@@ -972,6 +1450,8 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
           setPage={setUserPage}
           pageSize={userPageSize}
           setPageSize={setUserPageSize}
+          userSort={userSort}
+          setUserSort={setUserSort}
         />
       )}
 
@@ -1021,7 +1501,8 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
                 className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600"
                 onClick={() => {
                   setEditing(null);
-                  setClientForm({ name: "", disputer: "", status: "Active", round: 1 });
+                  const defaultDisputer = users.find((u) => u.name.toLowerCase().includes("annabel"))?.name || users[0]?.name || "Annabel";
+                  setClientForm({ name: "", disputer: defaultDisputer, status: "Active", round: 1 });
                   setModalOpen(true);
                 }}
               >
@@ -1110,6 +1591,18 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
         clients={clients}
         busy={busy}
       />
+      <DisputeModal
+        open={disputeModalOpen}
+        onClose={() => {
+          setDisputeModalOpen(false);
+          setEditingDispute(null);
+        }}
+        onSave={handleSaveDispute}
+        form={disputeForm}
+        setForm={setDisputeForm}
+        clients={clients}
+        busy={busy}
+      />
       </div>
     </div>
   );
@@ -1123,11 +1616,15 @@ function DocsSection({
   onAddClick,
   onEdit,
   onDelete,
+  docsSort,
+  setDocsSort,
 }: {
   docs: DocWithClient[];
   onAddClick: () => void;
   onEdit: (doc: DocRecord) => void;
   onDelete: (id: string) => void;
+  docsSort: { field: "client" | "docType" | "status" | "category"; dir: "asc" | "desc" };
+  setDocsSort: Dispatch<SetStateAction<{ field: "client" | "docType" | "status" | "category"; dir: "asc" | "desc" }>>;
 }) {
   const [docsSearch, setDocsSearch] = useState("");
   const [docsStatusFilter, setDocsStatusFilter] = useState<"all" | DocRecord["status"]>("all");
@@ -1137,16 +1634,24 @@ function DocsSection({
 
   const filteredDocs = useMemo(() => {
     const term = docsSearch.toLowerCase();
-    return docs.filter(({ client, doc }) => {
-      const matchesSearch =
-        client.name.toLowerCase().includes(term) ||
-        (doc.docType || "").toLowerCase().includes(term) ||
-        (doc.note || "").toLowerCase().includes(term);
-      const matchesStatus = docsStatusFilter === "all" ? true : doc.status === docsStatusFilter;
-      const matchesCategory = docsCategoryFilter === "all" ? true : doc.category === docsCategoryFilter;
-      return matchesSearch && matchesStatus && matchesCategory;
-    });
-  }, [docs, docsSearch, docsStatusFilter, docsCategoryFilter]);
+    return docs
+      .filter(({ client, doc }) => {
+        const matchesSearch =
+          client.name.toLowerCase().includes(term) ||
+          (doc.docType || "").toLowerCase().includes(term) ||
+          (doc.note || "").toLowerCase().includes(term);
+        const matchesStatus = docsStatusFilter === "all" ? true : doc.status === docsStatusFilter;
+        const matchesCategory = docsCategoryFilter === "all" ? true : doc.category === docsCategoryFilter;
+        return matchesSearch && matchesStatus && matchesCategory;
+      })
+      .sort((a, b) => {
+        const dir = docsSort.dir === "asc" ? 1 : -1;
+        if (docsSort.field === "client") return dir * a.client.name.localeCompare(b.client.name);
+        if (docsSort.field === "docType") return dir * a.doc.docType.localeCompare(b.doc.docType);
+        if (docsSort.field === "status") return dir * a.doc.status.localeCompare(b.doc.status);
+        return dir * a.doc.category.localeCompare(b.doc.category);
+      });
+  }, [docs, docsSearch, docsStatusFilter, docsCategoryFilter, docsSort]);
 
   const completing = filteredDocs.filter(({ doc }) => doc.category === "completing");
   const updating = filteredDocs.filter(({ doc }) => doc.category === "updating");
@@ -1157,9 +1662,30 @@ function DocsSection({
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
             <tr>
-              <th className="px-3 py-2 text-left">Client</th>
-              <th className="px-3 py-2 text-left">Doc</th>
-              <th className="px-3 py-2 text-left">Status</th>
+              <th
+                className="px-3 py-2 text-left cursor-pointer"
+                onClick={() =>
+                  setDocsSort((prev) => ({ field: "client", dir: prev.field === "client" && prev.dir === "asc" ? "desc" : "asc" }))
+                }
+              >
+                Client {docsSort.field === "client" ? (docsSort.dir === "asc" ? "↑" : "↓") : ""}
+              </th>
+              <th
+                className="px-3 py-2 text-left cursor-pointer"
+                onClick={() =>
+                  setDocsSort((prev) => ({ field: "docType", dir: prev.field === "docType" && prev.dir === "asc" ? "desc" : "asc" }))
+                }
+              >
+                Doc {docsSort.field === "docType" ? (docsSort.dir === "asc" ? "↑" : "↓") : ""}
+              </th>
+              <th
+                className="px-3 py-2 text-left cursor-pointer"
+                onClick={() =>
+                  setDocsSort((prev) => ({ field: "status", dir: prev.field === "status" && prev.dir === "asc" ? "desc" : "asc" }))
+                }
+              >
+                Status {docsSort.field === "status" ? (docsSort.dir === "asc" ? "↑" : "↓") : ""}
+              </th>
               <th className="px-3 py-2 text-left">Message</th>
               <th className="px-3 py-2 text-left">Actions</th>
             </tr>
@@ -1356,6 +1882,8 @@ function CreditMonitoringSection({
   setPage,
   pageSize,
   setPageSize,
+  cmSort,
+  setCmSort,
 }: {
   cmIssues: CmWithClient[];
   onAddClick: () => void;
@@ -1370,6 +1898,8 @@ function CreditMonitoringSection({
   setPage: Dispatch<SetStateAction<number>>;
   pageSize: number;
   setPageSize: Dispatch<SetStateAction<number>>;
+  cmSort: { field: "client" | "platform" | "issue" | "messageDate"; dir: "asc" | "desc" };
+  setCmSort: Dispatch<SetStateAction<{ field: "client" | "platform" | "issue" | "messageDate"; dir: "asc" | "desc" }>>;
 }) {
   const pageRows = (rows: CmWithClient[]) => rows.slice(page * pageSize, page * pageSize + pageSize);
 
@@ -1451,10 +1981,41 @@ function CreditMonitoringSection({
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
             <tr>
-              <th className="px-3 py-2 text-left">Client</th>
-              <th className="px-3 py-2 text-left">Platform</th>
-              <th className="px-3 py-2 text-left">Issue</th>
-              <th className="px-3 py-2 text-left">Message</th>
+              <th
+                className="px-3 py-2 text-left cursor-pointer"
+                onClick={() =>
+                  setCmSort((prev) => ({ field: "client", dir: prev.field === "client" && prev.dir === "asc" ? "desc" : "asc" }))
+                }
+              >
+                Client {cmSort.field === "client" ? (cmSort.dir === "asc" ? "↑" : "↓") : ""}
+              </th>
+              <th
+                className="px-3 py-2 text-left cursor-pointer"
+                onClick={() =>
+                  setCmSort((prev) => ({ field: "platform", dir: prev.field === "platform" && prev.dir === "asc" ? "desc" : "asc" }))
+                }
+              >
+                Platform {cmSort.field === "platform" ? (cmSort.dir === "asc" ? "↑" : "↓") : ""}
+              </th>
+              <th
+                className="px-3 py-2 text-left cursor-pointer"
+                onClick={() =>
+                  setCmSort((prev) => ({ field: "issue", dir: prev.field === "issue" && prev.dir === "asc" ? "desc" : "asc" }))
+                }
+              >
+                Issue {cmSort.field === "issue" ? (cmSort.dir === "asc" ? "↑" : "↓") : ""}
+              </th>
+              <th
+                className="px-3 py-2 text-left cursor-pointer"
+                onClick={() =>
+                  setCmSort((prev) => ({
+                    field: "messageDate",
+                    dir: prev.field === "messageDate" && prev.dir === "asc" ? "desc" : "asc",
+                  }))
+                }
+              >
+                Message {cmSort.field === "messageDate" ? (cmSort.dir === "asc" ? "↑" : "↓") : ""}
+              </th>
               <th className="px-3 py-2 text-left">Resolved</th>
               <th className="px-3 py-2 text-left">Actions</th>
             </tr>
@@ -1559,6 +2120,8 @@ function UsersSection({
   setPage,
   pageSize,
   setPageSize,
+  userSort,
+  setUserSort,
 }: {
   users: User[];
   clients: FullClient[];
@@ -1573,6 +2136,8 @@ function UsersSection({
   setPage: Dispatch<SetStateAction<number>>;
   pageSize: number;
   setPageSize: Dispatch<SetStateAction<number>>;
+  userSort: { field: "name" | "status"; dir: "asc" | "desc" };
+  setUserSort: Dispatch<SetStateAction<{ field: "name" | "status"; dir: "asc" | "desc" }>>;
 }) {
   const stats = useMemo(() => {
     const map = new Map<string, { total: number; overdue: number; issues: number; docsPending: number }>();
@@ -1664,10 +2229,24 @@ function UsersSection({
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
             <tr>
-              <th className="px-3 py-2 text-left">Name</th>
+              <th
+                className="px-3 py-2 text-left cursor-pointer"
+                onClick={() =>
+                  setUserSort((prev) => ({ field: "name", dir: prev.field === "name" && prev.dir === "asc" ? "desc" : "asc" }))
+                }
+              >
+                Name {userSort.field === "name" ? (userSort.dir === "asc" ? "↑" : "↓") : ""}
+              </th>
               <th className="px-3 py-2 text-left">Email</th>
               <th className="px-3 py-2 text-left">Role</th>
-              <th className="px-3 py-2 text-left">Status</th>
+              <th
+                className="px-3 py-2 text-left cursor-pointer"
+                onClick={() =>
+                  setUserSort((prev) => ({ field: "status", dir: prev.field === "status" && prev.dir === "asc" ? "desc" : "asc" }))
+                }
+              >
+                Status {userSort.field === "status" ? (userSort.dir === "asc" ? "↑" : "↓") : ""}
+              </th>
               <th className="px-3 py-2 text-left">Clients</th>
               <th className="px-3 py-2 text-left">Actions</th>
             </tr>
@@ -2207,6 +2786,154 @@ function CmModal({
             value={form.messageDate || ""}
             onChange={(e) => setForm({ ...form, messageDate: e.target.value })}
             disabled={!form.messageSent}
+          />
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <button className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600" onClick={onSave} disabled={busy}>
+            Save
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function DisputeModal({
+  open,
+  onClose,
+  onSave,
+  form,
+  setForm,
+  clients,
+  busy,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSave: () => void;
+  form: {
+    clientId: string;
+    bureau: string;
+    status: DisputeStatus;
+    round: number;
+    priority: "Low" | "Medium" | "High";
+    sentDate: string | null;
+    dueDate: string | null;
+    notes: string;
+    blockerFlags: string;
+  };
+  setForm: (f: {
+    clientId: string;
+    bureau: string;
+    status: DisputeStatus;
+    round: number;
+    priority: "Low" | "Medium" | "High";
+    sentDate: string | null;
+    dueDate: string | null;
+    notes: string;
+    blockerFlags: string;
+  }) => void;
+  clients: FullClient[];
+  busy: boolean;
+}) {
+  return (
+    <Modal title="Dispute" open={open} onClose={onClose}>
+      <div className="space-y-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">Client</label>
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={form.clientId}
+            onChange={(e) => setForm({ ...form, clientId: e.target.value })}
+          >
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">Bureau</label>
+            <select
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={form.bureau}
+              onChange={(e) => setForm({ ...form, bureau: e.target.value })}
+            >
+              <option value="Experian">Experian</option>
+              <option value="TransUnion">TransUnion</option>
+              <option value="Equifax">Equifax</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">Round</label>
+            <input
+              type="number"
+              min={1}
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={form.round}
+              onChange={(e) => setForm({ ...form, round: Number(e.target.value) || 1 })}
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">Status</label>
+            <select
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={form.status}
+              onChange={(e) => setForm({ ...form, status: e.target.value as DisputeStatus })}
+            >
+              <option value="Draft">Draft</option>
+              <option value="Sent">Sent</option>
+              <option value="Responded">Responded</option>
+              <option value="Closed">Closed</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">Priority</label>
+            <select
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={form.priority}
+              onChange={(e) => setForm({ ...form, priority: e.target.value as "Low" | "Medium" | "High" })}
+            >
+              <option value="Low">Low</option>
+              <option value="Medium">Medium</option>
+              <option value="High">High</option>
+            </select>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">Sent date</label>
+            <input
+              type="date"
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={form.sentDate || ""}
+              onChange={(e) => setForm({ ...form, sentDate: e.target.value })}
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">Due date</label>
+            <input
+              type="date"
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={form.dueDate || ""}
+              onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
+            />
+          </div>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">Notes / blockers</label>
+          <textarea
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            rows={3}
+            value={form.notes}
+            onChange={(e) => setForm({ ...form, notes: e.target.value })}
+            placeholder={form.blockerFlags}
           />
         </div>
         <div className="flex justify-end gap-2 pt-2">

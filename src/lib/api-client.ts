@@ -1,4 +1,4 @@
-import { FullClient, ClientProfile, IssueRecord, DocRecord, CreditMonitoringRecord } from "@/types/models";
+import { FullClient, ClientProfile, IssueRecord, DocRecord, CreditMonitoringRecord, DisputeRecord } from "@/types/models";
 import { User } from "@/types/models";
 
 export const fetchClients = async (): Promise<FullClient[]> => {
@@ -129,6 +129,36 @@ export const deleteCmIssue = async (cmId: string) => {
     body: JSON.stringify({ action: "deleteCmIssue", cmId }),
   });
   if (!res.ok) throw new Error("Could not delete credit monitoring issue");
+  return res.json();
+};
+
+export const addDispute = async (dispute: Partial<DisputeRecord> & { clientId: string }) => {
+  const res = await fetch("/api/actions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "addDispute", ...dispute }),
+  });
+  if (!res.ok) throw new Error("Could not add dispute");
+  return res.json();
+};
+
+export const updateDispute = async (dispute: DisputeRecord) => {
+  const res = await fetch("/api/actions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "updateDispute", ...dispute }),
+  });
+  if (!res.ok) throw new Error("Could not update dispute");
+  return res.json();
+};
+
+export const deleteDispute = async (disputeId: string) => {
+  const res = await fetch("/api/actions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "deleteDispute", disputeId }),
+  });
+  if (!res.ok) throw new Error("Could not delete dispute");
   return res.json();
 };
 

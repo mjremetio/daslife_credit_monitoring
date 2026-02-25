@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import sampleData from "@/data/clients.sample.json";
-import { ClientProfile, IssueRecord, DocRecord, CreditMonitoringRecord, User } from "../types/models";
+import { ClientProfile, IssueRecord, DocRecord, CreditMonitoringRecord, User, DisputeRecord, RoundHistory, MessageRecord } from "../types/models";
 import { ensureSchema, replaceAllData } from "./db";
 import crypto from "crypto";
 
@@ -27,7 +27,7 @@ export function seedIfEmpty() {
       id,
       name: String(row["Client Name"] || `Client ${idx + 1}`),
       onboardDate: processed,
-      disputer: String(row["Disputer"] || ""),
+      disputer: String(row["Disputer"] || "Annabel"),
       status: "Active",
       round,
       dateProcessed: processed,
@@ -41,11 +41,15 @@ export function seedIfEmpty() {
   const issues: IssueRecord[] = [];
   const docs: DocRecord[] = [];
   const cmIssues: CreditMonitoringRecord[] = [];
+  const disputes: DisputeRecord[] = [];
+  const rounds: RoundHistory[] = [];
+  const messages: MessageRecord[] = [];
   const users: User[] = [
+    { id: crypto.randomUUID(), name: "Annabel", email: "annabel@example.com", role: "Disputer", status: "Active" },
     { id: crypto.randomUUID(), name: "Ana Disputer", email: "ana@example.com", role: "Disputer", status: "Active" },
     { id: crypto.randomUUID(), name: "Ben Disputer", email: "ben@example.com", role: "Disputer", status: "Active" },
   ];
 
-  replaceAllData({ clients, issues, docs, cmIssues, users });
+  replaceAllData({ clients, issues, docs, cmIssues, users, disputes, rounds, messages });
   console.log(`Seeded ${clients.length} clients into sqlite at ${dbPath}`);
 }
