@@ -6,15 +6,31 @@ import { FullClient, User } from "@/types/models";
 import { useState } from "react";
 import { LogOut, UserCircle } from "lucide-react";
 
-export function AppShell({ initialClients, initialUsers }: { initialClients: FullClient[]; initialUsers: User[] }) {
+export function AppShell({
+  initialClients,
+  initialUsers,
+  initialTab,
+}: {
+  initialClients: FullClient[];
+  initialUsers: User[];
+  initialTab?: "overview" | "clients" | "ready" | "disputes" | "issues" | "docs" | "cm" | "users";
+}) {
   return (
     <AuthProvider>
-      <Authed initialClients={initialClients} initialUsers={initialUsers} />
+      <Authed initialClients={initialClients} initialUsers={initialUsers} initialTab={initialTab} />
     </AuthProvider>
   );
 }
 
-function Authed({ initialClients, initialUsers }: { initialClients: FullClient[]; initialUsers: User[] }) {
+function Authed({
+  initialClients,
+  initialUsers,
+  initialTab,
+}: {
+  initialClients: FullClient[];
+  initialUsers: User[];
+  initialTab?: "overview" | "clients" | "ready" | "disputes" | "issues" | "docs" | "cm" | "users";
+}) {
   const { user, login, logout } = useAuth();
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("password");
@@ -86,7 +102,7 @@ function Authed({ initialClients, initialUsers }: { initialClients: FullClient[]
           </button>
         </div>
       </header>
-      <Dashboard initialClients={initialClients} initialUsers={initialUsers} />
+      <Dashboard initialClients={initialClients} initialUsers={initialUsers} initialTab={initialTab} />
     </div>
   );
 }
