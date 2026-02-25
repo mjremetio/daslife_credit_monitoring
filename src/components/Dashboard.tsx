@@ -17,6 +17,7 @@ import {
   FileText,
   Users,
   Bug,
+  ClipboardList,
 } from "lucide-react";
 import { ClientsTable } from "./ClientsTable";
 import { MetricCard } from "./MetricCard";
@@ -37,7 +38,7 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
   const [search, setSearch] = useState("");
   const [disputerFilter, setDisputerFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [activeTab, setActiveTab] = useState<"overview" | "ready" | "issues" | "docs" | "cm" | "master">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "clients" | "ready" | "issues" | "docs" | "cm" | "users">("overview");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -134,11 +135,12 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
         <p className="px-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Navigation</p>
         {[
           { id: "overview", label: "Dashboard", icon: LayoutDashboard },
+          { id: "clients", label: "Client Management", icon: ClipboardList },
           { id: "ready", label: "Ready to Process", icon: ListChecks },
-          { id: "issues", label: "Issues", icon: Bug },
-          { id: "docs", label: "Documents", icon: FileText },
+          { id: "issues", label: "Dues with Issues", icon: Bug },
+          { id: "docs", label: "Document Trackers", icon: FileText },
           { id: "cm", label: "Credit Monitoring", icon: Shield },
-          { id: "master", label: "Master List", icon: Users },
+          { id: "users", label: "Users (Disputers)", icon: Users },
         ].map((item) => {
           const Icon = item.icon;
           const active = activeTab === item.id;
@@ -346,8 +348,11 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
       {/* Credit Monitoring */}
       {activeTab === "cm" && <CreditMonitoringSection cmIssues={cmIssues} />}
 
-      {/* Master List */}
-      {activeTab === "master" && (
+      {/* Users / Disputers */}
+      {activeTab === "users" && <UsersSection clients={clients} />}
+
+      {/* Client Management */}
+      {activeTab === "clients" && (
         <section className="space-y-4">
           <div className="rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-md">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -550,6 +555,65 @@ function CreditMonitoringSection({ cmIssues }: { cmIssues: CmWithClient[] }) {
               <tr>
                 <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={5}>
                   No credit monitoring issues.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function UsersSection({ clients }: { clients: FullClient[] }) {
+  const stats = useMemo(() => {
+    const map = new Map<
+      string,
+      { total: number; overdue: number; issues: number; docsPending: number }
+    >();
+    clients.forEach((c) => {
+      const key = c.disputer || "Unassigned";
+      const entry = map.get(key) || { total: 0, overdue: 0, issues: 0, docsPending: 0 };
+      entry.total += 1;
+      if (c.issues.some((i) => !i.resolved)) entry.issues += 1;
+      if (c.docs.some((d) => d.status === "pending" || d.status === "sent")) entry.docsPending += 1;
+      if (c.nextDueDate && parseISO(c.nextDueDate) < new Date()) entry.overdue += 1;
+      map.set(key, entry);
+    });
+    return Array.from(map.entries()).map(([disputer, data]) => ({ disputer, ...data }));
+  }, [clients]);
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-slate-900">Users (Disputers)</h2>
+        <span className="text-xs text-slate-500">Derived from client assignments</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+            <tr>
+              <th className="px-3 py-2 text-left">Disputer</th>
+              <th className="px-3 py-2 text-left">Clients</th>
+              <th className="px-3 py-2 text-left">Overdue</th>
+              <th className="px-3 py-2 text-left">Open Issues</th>
+              <th className="px-3 py-2 text-left">Docs Pending</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {stats.map((row) => (
+              <tr key={row.disputer}>
+                <td className="px-3 py-2 font-semibold text-slate-900">{row.disputer}</td>
+                <td className="px-3 py-2 text-slate-700">{row.total}</td>
+                <td className="px-3 py-2 text-slate-700">{row.overdue}</td>
+                <td className="px-3 py-2 text-slate-700">{row.issues}</td>
+                <td className="px-3 py-2 text-slate-700">{row.docsPending}</td>
+              </tr>
+            ))}
+            {stats.length === 0 && (
+              <tr>
+                <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={5}>
+                  No disputers found.
                 </td>
               </tr>
             )}
