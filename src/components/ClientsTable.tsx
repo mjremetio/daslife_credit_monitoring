@@ -10,7 +10,7 @@ import {
   SortingState,
   useReactTable,
 } from "@tanstack/react-table";
-import { ClientRecord } from "@/types/client";
+import { FullClient } from "@/types/models";
 import { format, parseISO, isBefore, addDays, isValid } from "date-fns";
 
 const formatDate = (value: string | null) => {
@@ -19,88 +19,96 @@ const formatDate = (value: string | null) => {
   return isValid(parsed) ? format(parsed, "MMM d, yyyy") : value;
 };
 
-const statusBadge = (record: ClientRecord) => {
-  if (!record.nextDueDate) return null;
+const statusBadge = (record: FullClient) => {
+  if (!record.nextDueDate) return <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">No due</span>;
   const date = parseISO(record.nextDueDate);
   if (!isValid(date)) return null;
   const now = new Date();
+  if (record.issues.some((i) => !i.resolved)) {
+    return <span className="rounded-full bg-orange-100 px-2 py-1 text-xs font-semibold text-orange-700">Has issue</span>;
+  }
   if (isBefore(date, now)) return <span className="rounded-full bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-600">Overdue</span>;
-  if (isBefore(date, addDays(now, 7))) return (
+  if (isBefore(date, addDays(now, 3))) return (
     <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">Due soon</span>
   );
   return <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">On track</span>;
 };
 
 interface ClientsTableProps {
-  data: ClientRecord[];
+  data: FullClient[];
 }
 
 export function ClientsTable({ data }: ClientsTableProps) {
   const [sorting, setSorting] = useState<SortingState>([{ id: "nextDueDate", desc: false }]);
 
-  const columns = useMemo<ColumnDef<ClientRecord>[]>(
-    () => [
-      {
-        header: "Client",
-        accessorKey: "clientName",
-        cell: ({ row }) => (
-          <div className="font-semibold text-slate-900">
-            {row.original.clientName || "(Unnamed)"}
-            <p className="text-xs text-slate-500">{row.original.disputer || "Unassigned"}</p>
-          </div>
-        ),
+  const columns = useMemo<ColumnDef<FullClient>[]>(() => [
+    {
+      header: "Client",
+      accessorKey: "name",
+      cell: ({ row }) => (
+        <div className="font-semibold text-slate-900">
+          {row.original.name || "(Unnamed)"}{" "}
+          <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{row.original.status}</span>
+          <p className="text-xs text-slate-500">{row.original.disputer || "Unassigned"}</p>
+        </div>
+      ),
+    },
+    {
+      header: "Round",
+      accessorKey: "round",
+      size: 60,
+      cell: ({ getValue }) => {
+        const value = getValue<number | null>();
+        return <span className="text-sm text-slate-700">{value ?? "-"}</span>;
       },
-      {
-        header: "Round",
-        accessorKey: "currentRound",
-        size: 60,
-        cell: ({ getValue }) => {
-          const value = getValue<number | null>();
-          return <span className="text-sm text-slate-700">{value ?? "-"}</span>;
-        },
+    },
+    {
+      header: "Processed",
+      accessorKey: "dateProcessed",
+      cell: ({ getValue }) => <span className="text-sm text-slate-700">{formatDate(getValue() as string | null)}</span>,
+    },
+    {
+      header: "Next Due",
+      accessorKey: "nextDueDate",
+      cell: ({ row }) => (
+        <div className="flex flex-col gap-1">
+          <span className="text-sm text-slate-800">{formatDate(row.original.nextDueDate)}</span>
+          {statusBadge(row.original)}
+        </div>
+      ),
+    },
+    {
+      header: "Issues",
+      accessorKey: "issues",
+      cell: ({ row }) => {
+        const open = row.original.issues.filter((i) => !i.resolved).length;
+        return (
+          <span
+            className={`rounded-full px-2 py-1 text-xs font-semibold ${
+              open ? "bg-orange-100 text-orange-700" : "bg-emerald-50 text-emerald-700"
+            }`}
+          >
+            {open ? `${open} open` : "Clear"}
+          </span>
+        );
       },
-      {
-        header: "Processed",
-        accessorKey: "dateProcessed",
-        cell: ({ getValue }) => <span className="text-sm text-slate-700">{formatDate(getValue() as string | null)}</span>,
+    },
+    {
+      header: "Docs Pending",
+      accessorKey: "docs",
+      cell: ({ row }) => {
+        const pending = row.original.docs.filter((d) => d.status === "pending" || d.status === "sent").length;
+        return <span className="text-sm text-slate-700">{pending}</span>;
       },
-      {
-        header: "Next Due",
-        accessorKey: "nextDueDate",
-        cell: ({ row }) => (
-          <div className="flex flex-col gap-1">
-            <span className="text-sm text-slate-800">{formatDate(row.original.nextDueDate)}</span>
-            {statusBadge(row.original)}
-          </div>
-        ),
-      },
-      {
-        header: "Notes",
-        accessorKey: "notes",
-        cell: ({ getValue }) => (
-          <span className="line-clamp-2 text-sm text-slate-600">{(getValue() as string) || "—"}</span>
-        ),
-      },
-      {
-        header: "Issues",
-        accessorKey: "issues",
-        cell: ({ getValue }) => {
-          const value = (getValue() as string) || "None";
-          const hasIssue = value.trim().length > 0 && value.toLowerCase() !== "none";
-          return (
-            <span
-              className={`rounded-full px-2 py-1 text-xs font-semibold ${
-                hasIssue ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-700"
-              }`}
-            >
-              {hasIssue ? value : "Clear"}
-            </span>
-          );
-        },
-      },
-    ],
-    [],
-  );
+    },
+    {
+      header: "Notes",
+      accessorKey: "notes",
+      cell: ({ getValue }) => (
+        <span className="line-clamp-2 text-sm text-slate-600">{(getValue() as string) || "—"}</span>
+      ),
+    },
+  ], []);
 
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
@@ -166,27 +174,27 @@ export function ClientsTable({ data }: ClientsTableProps) {
           <div key={row.id} className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-lg font-semibold text-slate-900">{row.clientName}</p>
+                <p className="text-lg font-semibold text-slate-900">{row.name}</p>
                 <p className="text-xs text-slate-500">{row.disputer || "Unassigned"}</p>
               </div>
               {statusBadge(row)}
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-700">
-              <div>
-                <p className="text-xs text-slate-500">Round</p>
-                <p className="font-semibold">{row.currentRound ?? "-"}</p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-500">Next Due</p>
-                <p className="font-semibold">{formatDate(row.nextDueDate)}</p>
-              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-700">
+                <div>
+                  <p className="text-xs text-slate-500">Round</p>
+                  <p className="font-semibold">{row.round ?? "-"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">Next Due</p>
+                  <p className="font-semibold">{formatDate(row.nextDueDate)}</p>
+                </div>
               <div className="col-span-2">
                 <p className="text-xs text-slate-500">Notes</p>
                 <p className="line-clamp-2">{row.notes || "—"}</p>
               </div>
               <div className="col-span-2">
                 <p className="text-xs text-slate-500">Issues</p>
-                <p>{row.issues || "None"}</p>
+                <p>{row.issues.filter((i) => !i.resolved).length || "None"}</p>
               </div>
             </div>
           </div>

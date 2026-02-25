@@ -1,10 +1,9 @@
-import sampleData from "@/data/clients.sample.json";
 import { Dashboard } from "@/components/Dashboard";
-import { normalizeFromAny } from "@/lib/transform";
+import { fetchFullClients } from "@/lib/db";
 
 export const revalidate = 0;
 
-export default function Home() {
-  const initialData = sampleData.map((row, idx) => normalizeFromAny(row as Record<string, unknown>, idx));
-  return <Dashboard initialData={initialData} />;
+export default async function Home() {
+  const data = fetchFullClients();
+  return <Dashboard initialData={data} />;
 }

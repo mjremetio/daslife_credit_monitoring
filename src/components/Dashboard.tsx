@@ -1,154 +1,125 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { addDays, isBefore, isValid, parseISO } from "date-fns";
-import { ArrowDownToLine, ArrowUpRight, CloudUpload, FileDown, FileSpreadsheet, RefreshCcw, Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { addDays, isWithinInterval, parseISO } from "date-fns";
+import {
+  AlertTriangle,
+  CalendarDays,
+  Check,
+  FileSpreadsheet,
+  RefreshCcw,
+  Search,
+  Send,
+  ShieldAlert,
+} from "lucide-react";
 import { ClientsTable } from "./ClientsTable";
 import { MetricCard } from "./MetricCard";
-import { ConnectionBadge } from "./ConnectionBadge";
-import { fetchClients, pushClients, checkConnection } from "@/lib/api-client";
-import { parseClientFile } from "@/lib/importers";
+import { fetchClients, markProcessed, toggleIssueResolved, addIssue } from "@/lib/api-client";
+import { FullClient, DocRecord, CreditMonitoringRecord } from "@/types/models";
 import { exportCsv, exportXls } from "@/lib/exporters";
-import { ClientRecord, SheetSource } from "@/types/client";
-import { normalizeFromAny } from "@/lib/transform";
 
-interface DashboardProps {
-  initialData: ClientRecord[];
-}
+const today = new Date();
 
-const isOverdue = (record: ClientRecord) => {
-  if (!record.nextDueDate) return false;
-  const date = parseISO(record.nextDueDate);
-  return isValid(date) && isBefore(date, new Date());
-};
+const formatDate = (value: string | null) => (value ? new Date(value + "T00:00:00").toLocaleDateString() : "—");
 
-const isDueSoon = (record: ClientRecord, days = 7) => {
-  if (!record.nextDueDate) return false;
-  const date = parseISO(record.nextDueDate);
-  if (!isValid(date)) return false;
-  const now = new Date();
-  return isBefore(date, addDays(now, days)) && !isBefore(date, now);
-};
+const isOverdue = (c: FullClient) => c.nextDueDate && parseISO(c.nextDueDate) < today;
+const dueWithin = (c: FullClient, days: number) =>
+  c.nextDueDate && isWithinInterval(parseISO(c.nextDueDate), { start: today, end: addDays(today, days) });
 
-const normalizeList = (data: Array<ClientRecord | Record<string, unknown>>) =>
-  data.map((row, idx) => normalizeFromAny(row as Record<string, unknown>, idx));
-
-export function Dashboard({ initialData }: DashboardProps) {
-  const [clients, setClients] = useState<ClientRecord[]>(normalizeList(initialData));
-  const [filtered, setFiltered] = useState<ClientRecord[]>(normalizeList(initialData));
-  const [source, setSource] = useState<SheetSource>("sample");
-  const [lastSyncedAt, setLastSyncedAt] = useState<string | undefined>(undefined);
-  const [searchTerm, setSearchTerm] = useState("");
+export function Dashboard({ initialData }: { initialData: FullClient[] }) {
+  const [clients, setClients] = useState<FullClient[]>(initialData);
+  const [search, setSearch] = useState("");
   const [disputerFilter, setDisputerFilter] = useState("all");
-  const [roundFilter, setRoundFilter] = useState("all");
-  const [issueFilter, setIssueFilter] = useState("all");
-  const [dueWindow, setDueWindow] = useState("all");
-  const [connected, setConnected] = useState<boolean | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState("all");
   const [busy, setBusy] = useState(false);
-  const uploadRef = useRef<HTMLInputElement | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
-  const refreshData = useCallback(async () => {
+  const refresh = async () => {
     setBusy(true);
     try {
-      const payload = await fetchClients();
-      setClients(payload.data);
-      setSource(payload.source);
-      setLastSyncedAt(payload.lastSyncedAt);
-      setStatusMessage(payload.error ?? null);
+      const data = await fetchClients();
+      setClients(data);
     } catch (error) {
-      setStatusMessage(`Refresh failed: ${String(error)}`);
+      setMessage(String(error));
     } finally {
       setBusy(false);
     }
-  }, []);
-
-  const pingConnection = useCallback(async () => {
-    const status = await checkConnection();
-    setConnected(status.connected);
-    if (!status.connected && status.reason) setStatusMessage(status.reason);
-  }, []);
+  };
 
   useEffect(() => {
-    refreshData();
-    pingConnection();
-  }, [refreshData, pingConnection]);
+    refresh();
+  }, []);
 
-  useEffect(() => {
-    const lower = searchTerm.toLowerCase();
-    const filteredRecords = clients.filter((record) => {
+  const filtered = useMemo(() => {
+    const term = search.toLowerCase();
+    return clients.filter((c) => {
       const matchesSearch =
-        record.clientName.toLowerCase().includes(lower) ||
-        record.disputer.toLowerCase().includes(lower) ||
-        record.notes.toLowerCase().includes(lower) ||
-        record.issues.toLowerCase().includes(lower);
-
-      const matchesDisputer = disputerFilter === "all" || record.disputer === disputerFilter;
-      const matchesRound =
-        roundFilter === "all" || String(record.currentRound ?? "") === roundFilter;
-      const hasIssue = record.issues && record.issues.trim().length > 0 && record.issues.toLowerCase() !== "none";
-      const matchesIssues =
-        issueFilter === "all" || (issueFilter === "open" && hasIssue) || (issueFilter === "clear" && !hasIssue);
-
-      let matchesDue = true;
-      if (dueWindow === "overdue") matchesDue = isOverdue(record);
-      if (dueWindow === "next7") matchesDue = isDueSoon(record, 7);
-      if (dueWindow === "next14") matchesDue = isDueSoon(record, 14);
-
-      return matchesSearch && matchesDisputer && matchesRound && matchesIssues && matchesDue;
+        c.name.toLowerCase().includes(term) || c.disputer.toLowerCase().includes(term) || c.notes.toLowerCase().includes(term);
+      const matchesDisputer = disputerFilter === "all" || c.disputer === disputerFilter;
+      const matchesStatus = statusFilter === "all" || c.status === statusFilter;
+      return matchesSearch && matchesDisputer && matchesStatus;
     });
-    setFiltered(filteredRecords);
-  }, [clients, searchTerm, disputerFilter, roundFilter, issueFilter, dueWindow]);
+  }, [clients, search, disputerFilter, statusFilter]);
 
-  const handleFile = async (file: File | null) => {
-    if (!file) return;
-    try {
-      setBusy(true);
-      const records = await parseClientFile(file);
-      setClients(records);
-      setStatusMessage(`Imported ${records.length} rows from ${file.name}`);
-    } catch (error) {
-      setStatusMessage(`Import failed: ${String(error)}`);
-    } finally {
-      setBusy(false);
-      if (uploadRef.current) uploadRef.current.value = "";
-    }
-  };
-
-  const handleSync = async () => {
-    try {
-      setBusy(true);
-      await pushClients(clients);
-      setStatusMessage("Synced to Google Sheet successfully");
-      setLastSyncedAt(new Date().toISOString());
-      setSource("google-sheet");
-    } catch (error) {
-      setStatusMessage(`Sync failed: ${String(error)}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const stats = useMemo(() => {
-    const total = clients.length;
-    const overdue = clients.filter(isOverdue).length;
-    const dueSoon = clients.filter((r) => isDueSoon(r, 7)).length;
-    const withIssues = clients.filter(
-      (r) => r.issues && r.issues.trim().length > 0 && r.issues.toLowerCase() !== "none",
-    ).length;
-    return { total, overdue, dueSoon, withIssues };
+  const counters = useMemo(() => {
+    const ready = clients.filter((c) => c.status === "Active" && !c.issues.some((i) => !i.resolved) && isOverdue(c)).length;
+    const withIssues = clients.filter((c) => c.issues.some((i) => !i.resolved)).length;
+    const docsPending = clients.filter((c) => c.docs.some((d) => d.status === "pending" || d.status === "sent")).length;
+    const cmIssues = clients.filter((c) => c.cmIssues.some((cm) => !cm.resolved)).length;
+    return { ready, withIssues, docsPending, cmIssues };
   }, [clients]);
 
-  const disputerOptions = useMemo(
-    () => Array.from(new Set(clients.map((c) => c.disputer).filter(Boolean))),
+  const dueStrip = useMemo(
+    () =>
+      clients
+        .filter((c) => c.nextDueDate && dueWithin(c, 7))
+        .sort((a, b) => (a.nextDueDate || "").localeCompare(b.nextDueDate || ""))
+        .slice(0, 6),
     [clients],
   );
 
-  const roundOptions = useMemo(
+  const readyQueue = useMemo(
     () =>
-      Array.from(new Set(clients.map((c) => c.currentRound).filter((v) => v !== null))).map((r) => String(r)),
+      clients
+        .filter((c) => c.status === "Active")
+        .sort((a, b) => (a.nextDueDate || "9999-99-99").localeCompare(b.nextDueDate || "9999-99-99")),
     [clients],
   );
+
+  const issues = useMemo(() =>
+    clients.flatMap((c) => c.issues.map((i) => ({ client: c, issue: i }))),
+  [clients]);
+
+  const docs = useMemo(() =>
+    clients.flatMap((c) => c.docs.map((d) => ({ client: c, doc: d }))),
+  [clients]);
+
+  const cmIssues = useMemo(() =>
+    clients.flatMap((c) => c.cmIssues.map((cm) => ({ client: c, cm }))),
+  [clients]);
+
+  const disputers = Array.from(new Set(clients.map((c) => c.disputer).filter(Boolean)));
+
+  const handleProcessed = async (id: string) => {
+    setBusy(true);
+    await markProcessed(id);
+    await refresh();
+    setBusy(false);
+  };
+
+  const handleResolveIssue = async (id: string, resolved: boolean) => {
+    setBusy(true);
+    await toggleIssueResolved(id, resolved);
+    await refresh();
+    setBusy(false);
+  };
+
+  const handleQuickIssue = async (payload: { clientId: string; issueType: string; note: string }) => {
+    setBusy(true);
+    await addIssue({ ...payload, messageSent: false, resolved: false });
+    await refresh();
+    setBusy(false);
+  };
 
   return (
     <div className="mx-auto max-w-6xl px-4 pb-16 pt-10">
@@ -156,81 +127,50 @@ export function Dashboard({ initialData }: DashboardProps) {
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div className="space-y-2">
             <p className="text-sm font-semibold uppercase tracking-wide text-sky-600">Das Life & Credit Solutions</p>
-            <h1 className="text-3xl font-semibold text-slate-900 md:text-4xl">
-              Credit Status Monitoring
-            </h1>
+            <h1 className="text-3xl font-semibold text-slate-900 md:text-4xl">Credit Status Monitoring</h1>
             <p className="max-w-2xl text-sm text-slate-600">
-              Track dispute rounds, due dates, and sheet connectivity. Import from CSV/XLS, sync back to Google
-              Sheets via secured Apps Script, and stay ahead of due dates.
+              Unified client profile across rounds, issues, docs, and credit monitoring. Data is stored locally in SQLite.
             </p>
-            <ConnectionBadge connected={connected} source={source} lastSyncedAt={lastSyncedAt} reason={statusMessage ?? undefined} />
           </div>
           <div className="flex flex-wrap gap-2">
             <button
               className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800"
-              onClick={refreshData}
+              onClick={refresh}
               disabled={busy}
             >
               <RefreshCcw size={16} /> Refresh
             </button>
             <button
-              className="inline-flex items-center gap-2 rounded-xl bg-sky-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-sky-600 disabled:opacity-50"
-              onClick={() => uploadRef.current?.click()}
-              disabled={busy}
-            >
-              <CloudUpload size={16} /> Import CSV/XLS
-            </button>
-            <input
-              ref={uploadRef}
-              type="file"
-              accept=".csv, application/vnd.ms-excel, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              className="hidden"
-              onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
-            />
-            <button
               className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow hover:border-slate-300"
               onClick={() => exportCsv(clients)}
-              disabled={clients.length === 0}
             >
-              <FileDown size={16} /> Export CSV
+              <FileSpreadsheet size={16} /> Export CSV
             </button>
             <button
               className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow hover:border-slate-300"
               onClick={() => exportXls(clients)}
-              disabled={clients.length === 0}
             >
               <FileSpreadsheet size={16} /> Export XLS
             </button>
-            <button
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600 disabled:opacity-50"
-              onClick={handleSync}
-              disabled={busy || clients.length === 0}
-            >
-              <ArrowUpRight size={16} /> Sync to Sheet
-            </button>
           </div>
         </div>
-        {statusMessage && (
-          <p className="mt-3 inline-flex items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
-            <ArrowDownToLine size={14} /> {statusMessage}
-          </p>
-        )}
+        {message && <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">{message}</p>}
       </header>
 
       <section className="mt-6 grid gap-4 md:grid-cols-4">
-        <MetricCard label="Clients" value={stats.total} helper="Total records loaded" accent="blue" />
-        <MetricCard label="Overdue" value={stats.overdue} helper="Next round date past today" accent="red" />
-        <MetricCard label="Due soon" value={stats.dueSoon} helper="Next 7 days" accent="amber" />
-        <MetricCard label="With issues" value={stats.withIssues} helper="Marked as needing attention" accent="green" />
+        <MetricCard label="Ready to process" value={counters.ready} helper="Overdue & no open issues" accent="blue" />
+        <MetricCard label="Clients w/ issues" value={counters.withIssues} helper="Unresolved issues" accent="amber" />
+        <MetricCard label="Docs pending" value={counters.docsPending} helper="Pending or sent docs" accent="green" />
+        <MetricCard label="CM issues" value={counters.cmIssues} helper="Unresolved credit monitoring" accent="red" />
       </section>
 
-      <section className="mt-8 rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-lg shadow-slate-100">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <section className="mt-6 rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-md">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-1 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 shadow-inner">
             <Search size={16} className="text-slate-500" />
             <input
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
               placeholder="Search client, disputer, notes..."
               className="w-full bg-transparent text-sm outline-none"
             />
@@ -242,50 +182,325 @@ export function Dashboard({ initialData }: DashboardProps) {
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
             >
               <option value="all">All disputers</option>
-              {disputerOptions.map((d) => (
+              {disputers.map((d) => (
                 <option key={d} value={d}>
                   {d}
                 </option>
               ))}
             </select>
             <select
-              value={roundFilter}
-              onChange={(e) => setRoundFilter(e.target.value)}
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
             >
-              <option value="all">All rounds</option>
-              {roundOptions.map((r) => (
-                <option key={r} value={r}>
-                  Round {r}
+              <option value="all">Any status</option>
+              {[
+                "Active",
+                "On Hold",
+                "Completed",
+                "Dropped",
+              ].map((s) => (
+                <option key={s} value={s}>
+                  {s}
                 </option>
               ))}
-            </select>
-            <select
-              value={dueWindow}
-              onChange={(e) => setDueWindow(e.target.value)}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-            >
-              <option value="all">All due dates</option>
-              <option value="next7">Due next 7 days</option>
-              <option value="next14">Due next 14 days</option>
-              <option value="overdue">Overdue</option>
-            </select>
-            <select
-              value={issueFilter}
-              onChange={(e) => setIssueFilter(e.target.value)}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-            >
-              <option value="all">Issues: any</option>
-              <option value="open">With issues</option>
-              <option value="clear">No issues</option>
             </select>
           </div>
         </div>
 
-        <div className="mt-5">
+        <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+          <CalendarDays size={16} className="text-slate-500" />
+          {dueStrip.length === 0 && <span>No clients due in the next 7 days.</span>}
+          {dueStrip.map((c) => (
+            <span key={c.id} className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1">
+              {c.name}
+              <span className="text-xs text-slate-500">{formatDate(c.nextDueDate)}</span>
+            </span>
+          ))}
+        </div>
+      </section>
+
+      <section className="mt-8 grid gap-6">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-slate-900">Ready to Process Queue</h2>
+            <span className="text-sm text-slate-500">Click “Mark Processed” to advance round & due date</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-3 py-2 text-left">Client</th>
+                  <th className="px-3 py-2 text-left">New/Old</th>
+                  <th className="px-3 py-2 text-left">Due</th>
+                  <th className="px-3 py-2 text-left">Disputer</th>
+                  <th className="px-3 py-2 text-left">Round</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {readyQueue.map((c) => (
+                  <tr key={c.id} className="hover:bg-slate-50">
+                    <td className="px-3 py-2 text-sm font-semibold text-slate-900">{c.name}</td>
+                    <td className="px-3 py-2 text-sm text-slate-700">{c.isNew ? "NEW" : "OLD"}</td>
+                    <td className="px-3 py-2 text-sm text-slate-700">{formatDate(c.nextDueDate)}</td>
+                    <td className="px-3 py-2 text-sm text-slate-700">{c.disputer || ""}</td>
+                    <td className="px-3 py-2 text-sm text-slate-700">{c.round}</td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        className="inline-flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-emerald-600"
+                        onClick={() => handleProcessed(c.id)}
+                        disabled={busy}
+                      >
+                        <Check size={14} /> Mark Processed
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {readyQueue.length === 0 && (
+                  <tr>
+                    <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={6}>
+                      No clients in queue.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="grid gap-6 md:grid-cols-2">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slate-900">Dues with Issues</h2>
+              <div className="text-xs text-slate-500">Toggle to resolve</div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Client</th>
+                    <th className="px-3 py-2 text-left">Issue</th>
+                    <th className="px-3 py-2 text-left">Message</th>
+                    <th className="px-3 py-2 text-left">Resolved</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {issues.map(({ client, issue }) => (
+                    <tr key={issue.id}>
+                      <td className="px-3 py-2 font-semibold text-slate-900">{client.name}</td>
+                      <td className="px-3 py-2 text-slate-700">{issue.issueType || "(unspecified)"}</td>
+                      <td className="px-3 py-2 text-slate-700">
+                        {issue.messageSent ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-700">
+                            <Send size={12} /> {issue.messageDate || "sent"}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-slate-500">Not sent</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={issue.resolved}
+                            onChange={(e) => handleResolveIssue(issue.id, e.target.checked)}
+                          />
+                          {issue.resolved ? "Resolved" : "Open"}
+                        </label>
+                      </td>
+                    </tr>
+                  ))}
+                  {issues.length === 0 && (
+                    <tr>
+                      <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={4}>
+                        No issues logged.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slate-900">Quick add issue</h2>
+              <ShieldAlert size={18} className="text-orange-500" />
+            </div>
+            <QuickIssueForm clients={clients} onSubmit={handleQuickIssue} busy={busy} />
+          </div>
+        </div>
+
+        <DocsSection docs={docs} />
+        <CreditMonitoringSection cmIssues={cmIssues} />
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-slate-900">Client Master List</h2>
+            <span className="text-xs text-slate-500">Search & filter above, sort columns in table.</span>
+          </div>
           <ClientsTable data={filtered} />
         </div>
       </section>
+    </div>
+  );
+}
+
+function QuickIssueForm({ clients, onSubmit, busy }: { clients: FullClient[]; onSubmit: (p: { clientId: string; issueType: string; note: string }) => void; busy: boolean }) {
+  const [clientId, setClientId] = useState(clients[0]?.id ?? "");
+  const [issueType, setIssueType] = useState("Proof of Address");
+  const [note, setNote] = useState("");
+
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!clientId) return;
+        onSubmit({ clientId, issueType, note });
+        setNote("");
+      }}
+    >
+      <div className="flex flex-col gap-1">
+        <label className="text-xs font-semibold text-slate-600">Client</label>
+        <select
+          className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+          value={clientId}
+          onChange={(e) => setClientId(e.target.value)}
+        >
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-xs font-semibold text-slate-600">Issue type</label>
+        <input
+          className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+          value={issueType}
+          onChange={(e) => setIssueType(e.target.value)}
+        />
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-xs font-semibold text-slate-600">Note</label>
+        <textarea
+          className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+          rows={3}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+        />
+      </div>
+      <button
+        type="submit"
+        className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-orange-600 disabled:opacity-50"
+        disabled={busy || !clientId}
+      >
+        <AlertTriangle size={16} /> Add issue
+      </button>
+    </form>
+  );
+}
+
+type DocWithClient = { client: FullClient; doc: DocRecord };
+type CmWithClient = { client: FullClient; cm: CreditMonitoringRecord };
+
+function DocsSection({ docs }: { docs: DocWithClient[] }) {
+  const completing = docs.filter(({ doc }) => doc.category === "completing");
+  const updating = docs.filter(({ doc }) => doc.category === "updating");
+
+  const renderTable = (rows: DocWithClient[]) => (
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+          <tr>
+            <th className="px-3 py-2 text-left">Client</th>
+            <th className="px-3 py-2 text-left">Doc</th>
+            <th className="px-3 py-2 text-left">Status</th>
+            <th className="px-3 py-2 text-left">Message</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map(({ client, doc }) => (
+            <tr key={doc.id}>
+              <td className="px-3 py-2 font-semibold text-slate-900">{client.name}</td>
+              <td className="px-3 py-2 text-slate-700">{doc.docType}</td>
+              <td className="px-3 py-2 text-slate-700 capitalize">{doc.status}</td>
+              <td className="px-3 py-2 text-slate-700">{doc.messageSent ? doc.messageDate || "sent" : "—"}</td>
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr>
+              <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={4}>
+                No items.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-slate-900">Document Trackers</h2>
+        <span className="text-xs text-slate-500">Completing vs Updating</span>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-slate-800">Completing Docs</h3>
+          {renderTable(completing)}
+        </div>
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-slate-800">Updating Docs</h3>
+          {renderTable(updating)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CreditMonitoringSection({ cmIssues }: { cmIssues: CmWithClient[] }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-slate-900">Credit Monitoring Issues</h2>
+        <span className="text-xs text-slate-500">Smart Credit / MFSN / Other</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+            <tr>
+              <th className="px-3 py-2 text-left">Client</th>
+              <th className="px-3 py-2 text-left">Platform</th>
+              <th className="px-3 py-2 text-left">Issue</th>
+              <th className="px-3 py-2 text-left">Message</th>
+              <th className="px-3 py-2 text-left">Resolved</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {cmIssues.map(({ client, cm }) => (
+              <tr key={cm.id}>
+                <td className="px-3 py-2 font-semibold text-slate-900">{client.name}</td>
+                <td className="px-3 py-2 text-slate-700">{cm.platform}</td>
+                <td className="px-3 py-2 text-slate-700">{cm.issue}</td>
+                <td className="px-3 py-2 text-slate-700">{cm.messageSent ? cm.messageDate || "sent" : "—"}</td>
+                <td className="px-3 py-2 text-slate-700">{cm.resolved ? "Yes" : "No"}</td>
+              </tr>
+            ))}
+            {cmIssues.length === 0 && (
+              <tr>
+                <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={5}>
+                  No credit monitoring issues.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
