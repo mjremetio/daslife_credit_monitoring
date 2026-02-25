@@ -40,6 +40,19 @@ interface ClientsTableProps {
   onEdit?: (client: FullClient) => void;
 }
 
+const ISSUE_FLAG_COLORS: Record<FullClient["issueFlag"], string> = {
+  None: "bg-slate-200 text-slate-700",
+  IDIQ: "bg-rose-100 text-rose-700",
+  ID: "bg-orange-100 text-orange-700",
+  "FTC Code": "bg-amber-100 text-amber-800",
+  Payment: "bg-cyan-100 text-cyan-800",
+  "DO NOT PROCESS": "bg-red-600 text-white",
+  "Completed :)": "bg-purple-600 text-white",
+  Paused: "bg-amber-200 text-amber-900",
+  "Proof of Address": "bg-emerald-100 text-emerald-800",
+  SSC: "bg-blue-200 text-blue-800",
+};
+
 export function ClientsTable({ data, onDelete, onEdit }: ClientsTableProps) {
   const [sorting, setSorting] = useState<SortingState>([{ id: "nextDueDate", desc: false }]);
 
@@ -65,7 +78,16 @@ export function ClientsTable({ data, onDelete, onEdit }: ClientsTableProps) {
         },
       },
       {
-        header: "Processed",
+        header: "Processed?",
+        accessorFn: (row) => Boolean(row.dateProcessed),
+        cell: ({ getValue }) => (
+          <span className="text-xs font-semibold text-slate-700">
+            {getValue() ? "Yes" : "No"}
+          </span>
+        ),
+      },
+      {
+        header: "Date Processed",
         accessorKey: "dateProcessed",
         cell: ({ getValue }) => <span className="text-sm text-slate-700">{formatDate(getValue() as string | null)}</span>,
       },
@@ -108,6 +130,15 @@ export function ClientsTable({ data, onDelete, onEdit }: ClientsTableProps) {
         accessorKey: "notes",
         cell: ({ getValue }) => (
           <span className="line-clamp-2 text-sm text-slate-600">{(getValue() as string) || "—"}</span>
+        ),
+      },
+      {
+        header: "ISSUES?",
+        accessorKey: "issueFlag",
+        cell: ({ row }) => (
+          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${ISSUE_FLAG_COLORS[row.original.issueFlag]}`}>
+            {row.original.issueFlag}
+          </span>
         ),
       },
       {

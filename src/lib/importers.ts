@@ -39,6 +39,7 @@ const defaultClient = (row: AnyRow): ClientProfile => {
     disputer: String(row.disputer ?? row["Disputer"] ?? ""),
     status: (row.status || "Active") as ClientProfile["status"],
     round,
+    issueFlag: "None",
     dateProcessed,
     nextDueDate,
     notes: String(row.notes ?? row["Notes/Remarks"] ?? ""),

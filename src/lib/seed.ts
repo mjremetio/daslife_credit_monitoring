@@ -29,6 +29,7 @@ export function seedIfEmpty() {
       onboardDate: processed,
       disputer: String(row["Disputer"] || "Annabel"),
       status: "Active",
+      issueFlag: "None",
       round,
       dateProcessed: processed,
       nextDueDate: nextDue,

@@ -13,6 +13,7 @@ import {
   DisputeRecord,
   RoundHistory,
   MessageRecord,
+  IssueFlag,
 } from "../types/models";
 
 // Use writable location for serverless (Vercel) – /tmp by default
@@ -32,6 +33,7 @@ type ClientRow = {
   onboard_date: string | null;
   disputer: string | null;
   status: string | null;
+  issue_flag: string | null;
   round: number;
   date_processed: string | null;
   next_due_date: string | null;
@@ -68,6 +70,7 @@ export function ensureSchema() {
       onboard_date TEXT,
       disputer TEXT,
       status TEXT DEFAULT 'Active',
+      issue_flag TEXT DEFAULT 'None',
       round INTEGER DEFAULT 1,
       date_processed TEXT,
       next_due_date TEXT,
@@ -165,6 +168,11 @@ export function ensureSchema() {
       }
     });
   });
+  try {
+    db.prepare("ALTER TABLE clients ADD COLUMN issue_flag TEXT").run();
+  } catch {
+    /* ignore */
+  }
 }
 
 ensureSchema();
@@ -173,13 +181,14 @@ export const dbHandle = db;
 
 export function upsertClients(clients: ClientProfile[]) {
   const stmt = db.prepare(`
-    INSERT INTO clients (id, name, onboard_date, disputer, status, round, date_processed, next_due_date, notes, flags, is_new)
-    VALUES (@id, @name, @onboardDate, @disputer, @status, @round, @dateProcessed, @nextDueDate, @notes, @flags, @isNew)
+    INSERT INTO clients (id, name, onboard_date, disputer, status, issue_flag, round, date_processed, next_due_date, notes, flags, is_new)
+    VALUES (@id, @name, @onboardDate, @disputer, @status, @issueFlag, @round, @dateProcessed, @nextDueDate, @notes, @flags, @isNew)
     ON CONFLICT(id) DO UPDATE SET
       name=excluded.name,
       onboard_date=excluded.onboard_date,
       disputer=excluded.disputer,
       status=excluded.status,
+      issue_flag=excluded.issue_flag,
       round=excluded.round,
       date_processed=excluded.date_processed,
       next_due_date=excluded.next_due_date,
@@ -192,6 +201,7 @@ export function upsertClients(clients: ClientProfile[]) {
       stmt.run({
         ...c,
         isNew: c.isNew ? 1 : 0,
+        issueFlag: c.issueFlag || "None",
       }),
     );
   });
@@ -204,6 +214,29 @@ export function addClient(client: ClientProfile) {
 
 export function deleteClient(clientId: string) {
   db.prepare("DELETE FROM clients WHERE id = ?").run(clientId);
+}
+
+export function setClientIssueFlag(clientId: string, flag: IssueFlag) {
+  db.prepare("UPDATE clients SET issue_flag = ? WHERE id = ?").run(flag, clientId);
+}
+
+export function getClient(clientId: string): (ClientProfile & { issueFlag: IssueFlag }) | null {
+  const row = db.prepare("SELECT * FROM clients WHERE id = ?").get(clientId) as (ClientRow & { issue_flag: string }) | undefined;
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    onboardDate: row.onboard_date,
+    disputer: row.disputer || "",
+    status: (row.status || "Active") as ClientProfile["status"],
+    issueFlag: (row.issue_flag || "None") as IssueFlag,
+    round: Number(row.round) || 1,
+    dateProcessed: row.date_processed,
+    nextDueDate: row.next_due_date,
+    notes: row.notes || "",
+    flags: row.flags || "",
+    isNew: Boolean(row.is_new),
+  };
 }
 
 export function replaceAllData(opts: {
@@ -448,6 +481,7 @@ export function fetchFullClients() {
     onboardDate: c.onboard_date,
     disputer: c.disputer || "",
     status: (c.status || "Active") as ClientProfile["status"],
+    issueFlag: (c.issue_flag || "None") as IssueFlag,
     round: Number(c.round) || 1,
     dateProcessed: c.date_processed,
     nextDueDate: c.next_due_date,
@@ -466,8 +500,9 @@ export function fetchFullClients() {
 }
 
 export function markProcessed(clientId: string, todayIso: string) {
-  const client = db.prepare("SELECT round FROM clients WHERE id = ?").get(clientId) as { round: number } | undefined;
+  const client = db.prepare("SELECT round, issue_flag FROM clients WHERE id = ?").get(clientId) as { round: number; issue_flag: string } | undefined;
   if (!client) return;
+  if (client.issue_flag === "DO NOT PROCESS") throw new Error("Client is marked DO NOT PROCESS");
   const nextRound = (client.round || 1) + 1;
   const nextDue = new Date(todayIso);
   nextDue.setDate(nextDue.getDate() + 30);
@@ -574,3 +609,5 @@ export function fetchUsers(): User[] {
   const rows = db.prepare("SELECT * FROM users").all() as UserRow[];
   return rows.map((r) => ({ id: r.id, name: r.name, email: r.email || "", role: r.role || "Disputer", status: (r.status || "Active") as User["status"] }));
 }
+
+export const ISSUE_FLAG_VALUES: IssueFlag[] = ["None", "IDIQ", "ID", "FTC Code", "Payment", "DO NOT PROCESS", "Completed :)", "Paused", "Proof of Address", "SSC"];

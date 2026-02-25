@@ -39,7 +39,7 @@ import {
   updateDispute,
   deleteDispute,
 } from "@/lib/api-client";
-import { FullClient, DocRecord, CreditMonitoringRecord, ClientProfile, User, IssueRecord, DisputeRecord, DisputeStatus } from "@/types/models";
+import { FullClient, DocRecord, CreditMonitoringRecord, ClientProfile, User, IssueRecord, DisputeRecord, DisputeStatus, IssueFlag } from "@/types/models";
 import { exportCsv, exportXls, exportRowsCsv, exportRowsXls } from "@/lib/exporters";
 import { Modal } from "./Modal";
 import {
@@ -58,12 +58,28 @@ const dueWithin = (c: FullClient, days: number) =>
 
 const blockersForClient = (c: FullClient) => {
   const blockers: string[] = [];
+  if (c.issueFlag === "DO NOT PROCESS") blockers.push("DO NOT PROCESS");
   if (c.issues.some((i) => !i.resolved)) blockers.push("Unresolved issues");
   if (c.docs.some((d) => d.status === "pending" || d.status === "sent")) blockers.push("Docs pending/sent");
   if (c.cmIssues.some((cm) => !cm.resolved)) blockers.push("Credit monitoring open");
   if (c.nextDueDate && new Date(c.nextDueDate) > new Date()) blockers.push("Not due yet");
   return blockers;
 };
+
+const ISSUE_FLAG_COLORS: Record<IssueFlag, string> = {
+  None: "bg-slate-200 text-slate-700",
+  IDIQ: "bg-rose-100 text-rose-700",
+  ID: "bg-orange-100 text-orange-700",
+  "FTC Code": "bg-amber-100 text-amber-800",
+  Payment: "bg-cyan-100 text-cyan-800",
+  "DO NOT PROCESS": "bg-red-600 text-white",
+  "Completed :)": "bg-purple-600 text-white",
+  Paused: "bg-amber-200 text-amber-900",
+  "Proof of Address": "bg-emerald-100 text-emerald-800",
+  SSC: "bg-blue-200 text-blue-800",
+};
+
+const ISSUE_FLAG_OPTIONS: IssueFlag[] = ["None", "IDIQ", "ID", "FTC Code", "Payment", "DO NOT PROCESS", "Completed :)", "Paused", "Proof of Address", "SSC"];
 
 export function Dashboard({ initialClients, initialUsers }: { initialClients: FullClient[]; initialUsers: User[] }) {
   const [clients, setClients] = useState<FullClient[]>(initialClients);
@@ -76,11 +92,28 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
   const [message, setMessage] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<FullClient | null>(null);
-  const [clientForm, setClientForm] = useState<{ name: string; disputer: string; status: ClientProfile["status"]; round: number }>({
+  const [clientForm, setClientForm] = useState<{
+    name: string;
+    disputer: string;
+    status: ClientProfile["status"];
+    round: number;
+    issueFlag: IssueFlag;
+    dateProcessed: string;
+    nextDueDate: string;
+    notes: string;
+  }>({
     name: "",
     disputer: "Annabel",
     status: "Active",
     round: 1,
+    issueFlag: "None",
+    dateProcessed: new Date().toISOString().slice(0, 10),
+    nextDueDate: (() => {
+      const dt = new Date();
+      dt.setDate(dt.getDate() + 30);
+      return dt.toISOString().slice(0, 10);
+    })(),
+    notes: "",
   });
   const [userModalOpen, setUserModalOpen] = useState(false);
   const [userEditing, setUserEditing] = useState<User | null>(null);
@@ -240,7 +273,9 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
     const withIssues = clients.filter((c) => c.issues.some((i) => !i.resolved)).length;
     const docsPending = clients.filter((c) => c.docs.some((d) => d.status === "pending" || d.status === "sent")).length;
     const cmIssues = clients.filter((c) => c.cmIssues.some((cm) => !cm.resolved)).length;
-    return { ready, withIssues, docsPending, cmIssues };
+    const doNotProcess = clients.filter((c) => c.issueFlag === "DO NOT PROCESS").length;
+    const completedFlag = clients.filter((c) => c.issueFlag === "Completed :)").length;
+    return { ready, withIssues, docsPending, cmIssues, doNotProcess, completedFlag };
   }, [clients]);
 
   const dueStrip = useMemo(
@@ -381,9 +416,14 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
 
   const handleProcessed = async (id: string) => {
     setBusy(true);
-    await markProcessed(id);
-    await refresh();
-    setBusy(false);
+    try {
+      await markProcessed(id);
+      await refresh();
+    } catch (err) {
+      setMessage(String(err));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleResolveIssue = async (id: string, resolved: boolean) => {
@@ -427,22 +467,46 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
   const handleSaveClient = async () => {
     if (!clientForm.name.trim()) return;
     setBusy(true);
+    const nextDue = clientForm.nextDueDate || (() => {
+      const dt = new Date(clientForm.dateProcessed || new Date().toISOString().slice(0, 10));
+      dt.setDate(dt.getDate() + 30);
+      return dt.toISOString().slice(0, 10);
+    })();
+    const status = clientForm.issueFlag === "Completed :)" ? "Completed" : clientForm.status;
     if (editing) {
       await updateClient({
         ...editing,
         ...clientForm,
-        dateProcessed: editing.dateProcessed || new Date().toISOString().slice(0, 10),
+        status,
+        nextDueDate: nextDue,
       });
     } else {
       await addClient({
         name: clientForm.name.trim(),
         disputer: clientForm.disputer,
-        status: clientForm.status,
+        status,
         round: clientForm.round,
-        dateProcessed: new Date().toISOString().slice(0, 10),
+        issueFlag: clientForm.issueFlag,
+        dateProcessed: clientForm.dateProcessed || new Date().toISOString().slice(0, 10),
+        nextDueDate: nextDue,
+        notes: clientForm.notes,
       });
     }
-    setClientForm({ name: "", disputer: "", status: "Active", round: 1 });
+    const defaultDue = (() => {
+      const dt = new Date();
+      dt.setDate(dt.getDate() + 30);
+      return dt.toISOString().slice(0, 10);
+    })();
+    setClientForm({
+      name: "",
+      disputer: users.find((u) => u.name.toLowerCase().includes("annabel"))?.name || users[0]?.name || "Annabel",
+      status: "Active",
+      round: 1,
+      issueFlag: "None",
+      dateProcessed: new Date().toISOString().slice(0, 10),
+      nextDueDate: defaultDue,
+      notes: "",
+    });
     setEditing(null);
     setModalOpen(false);
     await refresh();
@@ -654,11 +718,13 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
       {/* Overview */}
       {activeTab === "overview" && (
         <>
-          <section className="grid gap-4 md:grid-cols-4">
+          <section className="grid gap-4 md:grid-cols-6">
             <MetricCard label="Ready to process" value={counters.ready} helper="Overdue & no open issues" accent="blue" />
             <MetricCard label="Clients w/ issues" value={counters.withIssues} helper="Unresolved issues" accent="amber" />
             <MetricCard label="Docs pending" value={counters.docsPending} helper="Pending or sent docs" accent="green" />
             <MetricCard label="CM issues" value={counters.cmIssues} helper="Unresolved credit monitoring" accent="red" />
+            <MetricCard label="Do Not Process" value={counters.doNotProcess} helper="Flagged to halt" accent="red" />
+            <MetricCard label="Completed :)" value={counters.completedFlag} helper="Flagged complete" accent="blue" />
           </section>
 
           <section className="rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-md">
@@ -702,36 +768,44 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
               />
               <button
                 className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                onClick={() =>
-                  exportRowsCsv(
-                    filteredReady.map((c) => ({
-                      client: c.name,
-                      disputer: c.disputer,
-                      due: c.nextDueDate,
-                      round: c.round,
-                      isNew: c.isNew,
-                    })),
-                    "ready-queue.csv",
-                  )
-                }
-              >
+              onClick={() =>
+                exportRowsCsv(
+                  filteredReady.map((c) => ({
+                    processed: c.dateProcessed,
+                    client: c.name,
+                    disputer: c.disputer,
+                    issueFlag: c.issueFlag,
+                    due: c.nextDueDate,
+                    round: c.round,
+                    isNew: c.isNew,
+                    notes: c.notes,
+                    dateProcessed: c.dateProcessed,
+                  })),
+                  "ready-queue.csv",
+                )
+              }
+            >
                 Export CSV
               </button>
               <button
                 className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                onClick={() =>
-                  exportRowsXls(
-                    filteredReady.map((c) => ({
-                      client: c.name,
-                      disputer: c.disputer,
-                      due: c.nextDueDate,
-                      round: c.round,
-                      isNew: c.isNew,
-                    })),
-                    "ready-queue.xlsx",
-                    "Ready",
-                  )
-                }
+              onClick={() =>
+                exportRowsXls(
+                  filteredReady.map((c) => ({
+                    processed: c.dateProcessed,
+                    client: c.name,
+                    disputer: c.disputer,
+                    issueFlag: c.issueFlag,
+                    due: c.nextDueDate,
+                    round: c.round,
+                    isNew: c.isNew,
+                    notes: c.notes,
+                    dateProcessed: c.dateProcessed,
+                  })),
+                  "ready-queue.xlsx",
+                  "Ready",
+                )
+              }
               >
                 Export XLS
               </button>
@@ -741,6 +815,8 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
             <table className="min-w-full divide-y divide-slate-200">
               <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
+                  <th className="px-3 py-2 text-left">Processed</th>
+                  <th className="px-3 py-2 text-left">Disputer</th>
                   <th
                     className="px-3 py-2 text-left cursor-pointer"
                     onClick={() =>
@@ -752,19 +828,6 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
                   >
                     Client {readySort.field === "name" ? (readySort.dir === "asc" ? "↑" : "↓") : ""}
                   </th>
-                  <th className="px-3 py-2 text-left">New/Old</th>
-                  <th
-                    className="px-3 py-2 text-left cursor-pointer"
-                    onClick={() =>
-                      setReadySort((prev) => ({
-                        field: "due",
-                        dir: prev.field === "due" && prev.dir === "asc" ? "desc" : "asc",
-                      }))
-                    }
-                  >
-                    Due {readySort.field === "due" ? (readySort.dir === "asc" ? "↑" : "↓") : ""}
-                  </th>
-                  <th className="px-3 py-2 text-left">Disputer</th>
                   <th
                     className="px-3 py-2 text-left cursor-pointer"
                     onClick={() =>
@@ -774,21 +837,47 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
                       }))
                     }
                   >
-                    Round {readySort.field === "round" ? (readySort.dir === "asc" ? "↑" : "↓") : ""}
+                    Current Round {readySort.field === "round" ? (readySort.dir === "asc" ? "↑" : "↓") : ""}
                   </th>
-                  <th className="px-3 py-2 text-left">Ready</th>
+                  <th className="px-3 py-2 text-left">Date Processed</th>
+                  <th
+                    className="px-3 py-2 text-left cursor-pointer"
+                    onClick={() =>
+                      setReadySort((prev) => ({
+                        field: "due",
+                        dir: prev.field === "due" && prev.dir === "asc" ? "desc" : "asc",
+                      }))
+                    }
+                  >
+                    Next Round Due {readySort.field === "due" ? (readySort.dir === "asc" ? "↑" : "↓") : ""}
+                  </th>
+                  <th className="px-3 py-2 text-left">Notes/Remarks</th>
+                  <th className="px-3 py-2 text-left">ISSUES?</th>
                   <th className="px-3 py-2" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {paginate(filteredReady, readyPage, readyPageSize).map((c) => (
                   <tr key={c.id} className="hover:bg-slate-50">
-                    <td className="px-3 py-2 text-sm font-semibold text-slate-900">{c.name}</td>
-                    <td className="px-3 py-2 text-sm text-slate-700">{c.isNew ? "NEW" : "OLD"}</td>
-                    <td className="px-3 py-2 text-sm text-slate-700">{formatDate(c.nextDueDate)}</td>
-                    <td className="px-3 py-2 text-sm text-slate-700">{c.disputer || ""}</td>
-                    <td className="px-3 py-2 text-sm text-slate-700">{c.round}</td>
                     <td className="px-3 py-2 text-sm">
+                      {c.dateProcessed ? (
+                        <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">Processed</span>
+                      ) : (
+                        <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">Pending</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-sm text-slate-700">{c.disputer || ""}</td>
+                    <td className="px-3 py-2 text-sm font-semibold text-slate-900">{c.name}</td>
+                    <td className="px-3 py-2 text-sm text-slate-700">{c.round}</td>
+                    <td className="px-3 py-2 text-sm text-slate-700">{formatDate(c.dateProcessed)}</td>
+                    <td className="px-3 py-2 text-sm text-slate-700">{formatDate(c.nextDueDate)}</td>
+                    <td className="px-3 py-2 text-sm text-slate-700">{c.notes || "—"}</td>
+                    <td className="px-3 py-2 text-sm">
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${ISSUE_FLAG_COLORS[c.issueFlag]}`}>
+                        {c.issueFlag}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-right space-y-2">
                       {blockersForClient(c).length === 0 ? (
                         <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">Ready</span>
                       ) : (
@@ -797,18 +886,17 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
                           <span>{blockersForClient(c)[0]}</span>
                         </div>
                       )}
-                    </td>
-                    <td className="px-3 py-2 text-right space-y-2">
                       <button
                         className="inline-flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-emerald-600"
                         onClick={() => handleProcessed(c.id)}
-                        disabled={busy}
+                        disabled={busy || c.issueFlag === "DO NOT PROCESS"}
+                        title={c.issueFlag === "DO NOT PROCESS" ? "Flagged DO NOT PROCESS" : undefined}
                       >
                         <Check size={14} /> Mark Processed
                       </button>
                       <button
                         className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-slate-800 disabled:opacity-50"
-                        disabled={blockersForClient(c).length > 0 || busy}
+                        disabled={blockersForClient(c).length > 0 || busy || c.issueFlag === "DO NOT PROCESS"}
                         onClick={() => {
                           setEditingDispute(null);
                           setDisputeForm({
@@ -832,7 +920,7 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
                 ))}
                 {filteredReady.length === 0 && (
                   <tr>
-                    <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={6}>
+                    <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={9}>
                       No clients in queue.
                     </td>
                   </tr>
@@ -1502,7 +1590,21 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
                 onClick={() => {
                   setEditing(null);
                   const defaultDisputer = users.find((u) => u.name.toLowerCase().includes("annabel"))?.name || users[0]?.name || "Annabel";
-                  setClientForm({ name: "", disputer: defaultDisputer, status: "Active", round: 1 });
+                  const defaultDue = (() => {
+                    const dt = new Date();
+                    dt.setDate(dt.getDate() + 30);
+                    return dt.toISOString().slice(0, 10);
+                  })();
+                  setClientForm({
+                    name: "",
+                    disputer: defaultDisputer,
+                    status: "Active",
+                    round: 1,
+                    issueFlag: "None",
+                    dateProcessed: new Date().toISOString().slice(0, 10),
+                    nextDueDate: defaultDue,
+                    notes: "",
+                  });
                   setModalOpen(true);
                 }}
               >
@@ -1525,6 +1627,10 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
                   disputer: client.disputer,
                   status: client.status,
                   round: client.round,
+                  issueFlag: client.issueFlag,
+                  dateProcessed: client.dateProcessed || new Date().toISOString().slice(0, 10),
+                  nextDueDate: client.nextDueDate || "",
+                  notes: client.notes,
                 });
                 setModalOpen(true);
               }}
@@ -2353,8 +2459,26 @@ function ClientModal({
   open: boolean;
   onClose: () => void;
   onSave: () => void;
-  form: { name: string; disputer: string; status: ClientProfile["status"]; round: number };
-  setForm: (f: { name: string; disputer: string; status: ClientProfile["status"]; round: number }) => void;
+  form: {
+    name: string;
+    disputer: string;
+    status: ClientProfile["status"];
+    round: number;
+    issueFlag: IssueFlag;
+    dateProcessed: string;
+    nextDueDate: string;
+    notes: string;
+  };
+  setForm: (f: {
+    name: string;
+    disputer: string;
+    status: ClientProfile["status"];
+    round: number;
+    issueFlag: IssueFlag;
+    dateProcessed: string;
+    nextDueDate: string;
+    notes: string;
+  }) => void;
   disputers: string[];
   busy: boolean;
 }) {
@@ -2384,6 +2508,26 @@ function ClientModal({
             ))}
           </datalist>
         </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">ISSUES?</label>
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={form.issueFlag}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                issueFlag: e.target.value as IssueFlag,
+                status: e.target.value === "Completed :)" ? "Completed" : form.status,
+              })
+            }
+          >
+            {ISSUE_FLAG_OPTIONS.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="grid grid-cols-2 gap-2">
           <div className="flex flex-col gap-1">
             <label className="text-xs font-semibold text-slate-600">Status</label>
@@ -2409,6 +2553,35 @@ function ClientModal({
               onChange={(e) => setForm({ ...form, round: Number(e.target.value) || 1 })}
             />
           </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">Date Processed</label>
+            <input
+              type="date"
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={form.dateProcessed}
+              onChange={(e) => setForm({ ...form, dateProcessed: e.target.value })}
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">Next Round Due (+30)</label>
+            <input
+              type="date"
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={form.nextDueDate}
+              onChange={(e) => setForm({ ...form, nextDueDate: e.target.value })}
+            />
+          </div>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">Notes / Remarks</label>
+          <textarea
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            rows={3}
+            value={form.notes}
+            onChange={(e) => setForm({ ...form, notes: e.target.value })}
+          />
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <button
@@ -2542,11 +2715,18 @@ function IssueModal({
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-xs font-semibold text-slate-600">Issue type</label>
-          <input
+          <select
             className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
             value={form.issueType}
             onChange={(e) => setForm({ ...form, issueType: e.target.value })}
-          />
+          >
+            {ISSUE_FLAG_OPTIONS.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+            <option value="Other">Other</option>
+          </select>
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-xs font-semibold text-slate-600">Note</label>

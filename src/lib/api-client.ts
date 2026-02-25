@@ -192,6 +192,16 @@ export const deleteClient = async (clientId: string) => {
   return res.json();
 };
 
+export const setIssueFlag = async (clientId: string, issueFlag: ClientProfile["issueFlag"]) => {
+  const res = await fetch("/api/actions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "setIssueFlag", clientId, issueFlag }),
+  });
+  if (!res.ok) throw new Error("Could not update issue flag");
+  return res.json();
+};
+
 export const fetchUsers = async (): Promise<User[]> => {
   const res = await fetch("/api/users", { cache: "no-store" });
   if (!res.ok) throw new Error("Failed to fetch users");

@@ -23,8 +23,11 @@ import {
   updateDispute,
   deleteDispute,
   addRound,
+  setClientIssueFlag,
+  getClient,
+  ISSUE_FLAG_VALUES,
 } from "@/lib/db";
-import { IssueRecord, DocRecord, CreditMonitoringRecord, ClientProfile, DocStatus, DocCategory, DisputeRecord, RoundHistory } from "@/types/models";
+import { IssueRecord, DocRecord, CreditMonitoringRecord, ClientProfile, DocStatus, DocCategory, DisputeRecord, RoundHistory, IssueFlag } from "@/types/models";
 
 export async function POST(req: Request) {
   try {
@@ -32,7 +35,11 @@ export async function POST(req: Request) {
     const { action } = body;
 
   if (action === "markProcessed") {
-    markProcessed(body.clientId, new Date().toISOString().slice(0, 10));
+    try {
+      markProcessed(body.clientId, new Date().toISOString().slice(0, 10));
+    } catch (err) {
+      return NextResponse.json({ ok: false, message: (err as Error).message }, { status: 400 });
+    }
     return NextResponse.json({ ok: true });
   }
 
@@ -54,6 +61,9 @@ export async function POST(req: Request) {
         priority: (body.priority || "Medium") as IssueRecord["priority"],
       };
       addIssue(issue);
+      if (ISSUE_FLAG_VALUES.includes(issue.issueType as IssueFlag)) {
+        setClientIssueFlag(issue.clientId, issue.issueType as IssueFlag);
+      }
       return NextResponse.json({ ok: true, issue });
     }
 
@@ -163,12 +173,14 @@ export async function POST(req: Request) {
             dt.setDate(dt.getDate() + 30);
             return dt.toISOString().slice(0, 10);
           })();
+      const issueFlag = (body.issueFlag || "None") as IssueFlag;
       const client: ClientProfile = {
         id: crypto.randomUUID(),
         name: body.name || "Unnamed",
         onboardDate: body.onboardDate || null,
         disputer: body.disputer || "Annabel",
-        status: body.status || "Active",
+        status: issueFlag === "Completed :)" ? "Completed" : body.status || "Active",
+        issueFlag,
         round: Number(body.round || 1),
         dateProcessed: today,
         nextDueDate: nextDue,
@@ -186,7 +198,8 @@ export async function POST(req: Request) {
         name: body.name || "Unnamed",
         onboardDate: body.onboardDate || null,
         disputer: body.disputer || "Annabel",
-        status: body.status || "Active",
+        issueFlag: (body.issueFlag || "None") as IssueFlag,
+        status: ((body.issueFlag || "None") === "Completed :)" ? "Completed" : body.status) || "Active",
         round: Number(body.round || 1),
         dateProcessed: body.dateProcessed || null,
         nextDueDate: body.nextDueDate || null,
@@ -259,6 +272,16 @@ export async function POST(req: Request) {
       };
       addRound(round);
       return NextResponse.json({ ok: true, round });
+    }
+
+    if (action === "setIssueFlag") {
+      const flag = (body.issueFlag || "None") as IssueFlag;
+      if (!ISSUE_FLAG_VALUES.includes(flag)) return NextResponse.json({ ok: false, message: "Invalid issueFlag" }, { status: 400 });
+      const client = getClient(body.clientId);
+      if (!client) return NextResponse.json({ ok: false, message: "Client not found" }, { status: 404 });
+      const status = flag === "Completed :)" ? "Completed" : client.status;
+      upsertClients([{ ...client, issueFlag: flag, status }]);
+      return NextResponse.json({ ok: true, issueFlag: flag, status });
     }
 
     if (action === "disputeGate") {

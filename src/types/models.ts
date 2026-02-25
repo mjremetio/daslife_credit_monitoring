@@ -1,11 +1,24 @@
 export type ClientStatus = "Active" | "On Hold" | "Completed" | "Dropped";
 
+export type IssueFlag =
+  | "None"
+  | "IDIQ"
+  | "ID"
+  | "FTC Code"
+  | "Payment"
+  | "DO NOT PROCESS"
+  | "Completed :)"
+  | "Paused"
+  | "Proof of Address"
+  | "SSC";
+
 export type ClientProfile = {
   id: string;
   name: string;
   onboardDate: string | null;
   disputer: string;
   status: ClientStatus;
+  issueFlag: IssueFlag;
   round: number;
   dateProcessed: string | null;
   nextDueDate: string | null;
