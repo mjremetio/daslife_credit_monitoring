@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import sampleData from "@/data/clients.sample.json";
-import { ClientProfile, IssueRecord, DocRecord, CreditMonitoringRecord } from "@/types/models";
+import { ClientProfile, IssueRecord, DocRecord, CreditMonitoringRecord } from "../types/models";
 import { ensureSchema, replaceAllData } from "./db";
 import crypto from "crypto";
 

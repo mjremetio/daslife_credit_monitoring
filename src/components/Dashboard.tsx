@@ -11,6 +11,12 @@ import {
   Search,
   Send,
   ShieldAlert,
+  LayoutDashboard,
+  ListChecks,
+  Shield,
+  FileText,
+  Users,
+  Bug,
 } from "lucide-react";
 import { ClientsTable } from "./ClientsTable";
 import { MetricCard } from "./MetricCard";
@@ -31,6 +37,7 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
   const [search, setSearch] = useState("");
   const [disputerFilter, setDisputerFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [activeTab, setActiveTab] = useState<"overview" | "ready" | "issues" | "docs" | "cm" | "master">("overview");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -122,8 +129,36 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
   };
 
   return (
-    <div className="mx-auto max-w-6xl px-4 pb-16 pt-10">
-      <header className="rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-lg shadow-sky-100/60">
+    <div className="mx-auto flex max-w-6xl gap-5 px-4 pb-16 pt-10">
+      <nav className="sticky top-6 hidden h-fit min-w-[210px] flex-col gap-2 rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm md:flex">
+        <p className="px-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Navigation</p>
+        {[
+          { id: "overview", label: "Dashboard", icon: LayoutDashboard },
+          { id: "ready", label: "Ready to Process", icon: ListChecks },
+          { id: "issues", label: "Issues", icon: Bug },
+          { id: "docs", label: "Documents", icon: FileText },
+          { id: "cm", label: "Credit Monitoring", icon: Shield },
+          { id: "master", label: "Master List", icon: Users },
+        ].map((item) => {
+          const Icon = item.icon;
+          const active = activeTab === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id as typeof activeTab)}
+              className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition ${
+                active ? "bg-slate-900 text-white shadow" : "text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              <Icon size={16} />
+              {item.label}
+            </button>
+          );
+        })}
+      </nav>
+
+      <div className="flex-1 space-y-6">
+        <header className="rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-lg shadow-sky-100/60">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div className="space-y-2">
             <p className="text-sm font-semibold uppercase tracking-wide text-sky-600">Das Life & Credit Solutions</p>
@@ -157,71 +192,40 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
         {message && <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">{message}</p>}
       </header>
 
-      <section className="mt-6 grid gap-4 md:grid-cols-4">
-        <MetricCard label="Ready to process" value={counters.ready} helper="Overdue & no open issues" accent="blue" />
-        <MetricCard label="Clients w/ issues" value={counters.withIssues} helper="Unresolved issues" accent="amber" />
-        <MetricCard label="Docs pending" value={counters.docsPending} helper="Pending or sent docs" accent="green" />
-        <MetricCard label="CM issues" value={counters.cmIssues} helper="Unresolved credit monitoring" accent="red" />
-      </section>
+      {/* Overview */}
+      {activeTab === "overview" && (
+        <>
+          <section className="grid gap-4 md:grid-cols-4">
+            <MetricCard label="Ready to process" value={counters.ready} helper="Overdue & no open issues" accent="blue" />
+            <MetricCard label="Clients w/ issues" value={counters.withIssues} helper="Unresolved issues" accent="amber" />
+            <MetricCard label="Docs pending" value={counters.docsPending} helper="Pending or sent docs" accent="green" />
+            <MetricCard label="CM issues" value={counters.cmIssues} helper="Unresolved credit monitoring" accent="red" />
+          </section>
 
-      <section className="mt-6 rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-md">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="flex flex-1 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 shadow-inner">
-            <Search size={16} className="text-slate-500" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search client, disputer, notes..."
-              className="w-full bg-transparent text-sm outline-none"
-            />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <select
-              value={disputerFilter}
-              onChange={(e) => setDisputerFilter(e.target.value)}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-            >
-              <option value="all">All disputers</option>
-              {disputers.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
+          <section className="rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-md">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="flex flex-1 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 shadow-inner">
+                <CalendarDays size={16} className="text-slate-500" />
+                <p className="text-sm text-slate-700">Due in next 7 days</p>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+              {dueStrip.length === 0 && <span>No clients due in the next 7 days.</span>}
+              {dueStrip.map((c) => (
+                <span key={c.id} className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1">
+                  {c.name}
+                  <span className="text-xs text-slate-500">{formatDate(c.nextDueDate)}</span>
+                </span>
               ))}
-            </select>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-            >
-              <option value="all">Any status</option>
-              {[
-                "Active",
-                "On Hold",
-                "Completed",
-                "Dropped",
-              ].map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
+            </div>
+          </section>
+        </>
+      )}
 
-        <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-          <CalendarDays size={16} className="text-slate-500" />
-          {dueStrip.length === 0 && <span>No clients due in the next 7 days.</span>}
-          {dueStrip.map((c) => (
-            <span key={c.id} className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1">
-              {c.name}
-              <span className="text-xs text-slate-500">{formatDate(c.nextDueDate)}</span>
-            </span>
-          ))}
-        </div>
-      </section>
-
-      <section className="mt-8 grid gap-6">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      {/* Ready Queue */}
+      {activeTab === "ready" && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-slate-900">Ready to Process Queue</h2>
             <span className="text-sm text-slate-500">Click “Mark Processed” to advance round & due date</span>
@@ -267,8 +271,11 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
               </tbody>
             </table>
           </div>
-        </div>
+        </section>
+      )}
 
+      {/* Issues */}
+      {activeTab === "issues" && (
         <div className="grid gap-6 md:grid-cols-2">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="mb-3 flex items-center justify-between">
@@ -331,18 +338,66 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
             <QuickIssueForm clients={clients} onSubmit={handleQuickIssue} busy={busy} />
           </div>
         </div>
+      )}
 
-        <DocsSection docs={docs} />
-        <CreditMonitoringSection cmIssues={cmIssues} />
+      {/* Docs */}
+      {activeTab === "docs" && <DocsSection docs={docs} />}
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-slate-900">Client Master List</h2>
-            <span className="text-xs text-slate-500">Search & filter above, sort columns in table.</span>
+      {/* Credit Monitoring */}
+      {activeTab === "cm" && <CreditMonitoringSection cmIssues={cmIssues} />}
+
+      {/* Master List */}
+      {activeTab === "master" && (
+        <section className="space-y-4">
+          <div className="rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-md">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="flex flex-1 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 shadow-inner">
+                <Search size={16} className="text-slate-500" />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search client, disputer, notes..."
+                  className="w-full bg-transparent text-sm outline-none"
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <select
+                  value={disputerFilter}
+                  onChange={(e) => setDisputerFilter(e.target.value)}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                >
+                  <option value="all">All disputers</option>
+                  {disputers.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                >
+                  <option value="all">Any status</option>
+                  {["Active", "On Hold", "Completed", "Dropped"].map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
-          <ClientsTable data={filtered} />
-        </div>
-      </section>
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slate-900">Client Master List</h2>
+              <span className="text-xs text-slate-500">Search & filter above, sort columns in table.</span>
+            </div>
+            <ClientsTable data={filtered} />
+          </div>
+        </section>
+      )}
+      </div>
     </div>
   );
 }

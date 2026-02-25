@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
-import { ClientProfile, IssueRecord, CreditMonitoringRecord, DocRecord, DocCategory, DocStatus } from "@/types/models";
+import { ClientProfile, IssueRecord, CreditMonitoringRecord, DocRecord, DocCategory, DocStatus } from "../types/models";
 
 // Use writable location for serverless (Vercel) – /tmp by default
 const dataDir = process.env.SQLITE_DIR || path.join("/tmp", "daslife_data");
