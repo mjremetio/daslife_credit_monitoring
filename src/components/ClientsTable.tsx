@@ -1,6 +1,5 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import {
   ColumnDef,
   flexRender,
@@ -12,6 +11,7 @@ import {
 } from "@tanstack/react-table";
 import { FullClient } from "@/types/models";
 import { format, parseISO, isBefore, addDays, isValid } from "date-fns";
+import { useMemo, useState } from "react";
 
 const formatDate = (value: string | null) => {
   if (!value) return "";
@@ -37,92 +37,106 @@ const statusBadge = (record: FullClient) => {
 interface ClientsTableProps {
   data: FullClient[];
   onDelete?: (id: string) => void;
+  onEdit?: (client: FullClient) => void;
 }
 
-export function ClientsTable({ data, onDelete }: ClientsTableProps) {
+export function ClientsTable({ data, onDelete, onEdit }: ClientsTableProps) {
   const [sorting, setSorting] = useState<SortingState>([{ id: "nextDueDate", desc: false }]);
 
-  const columns = useMemo<ColumnDef<FullClient>[]>(() => [
-    {
-      header: "Client",
-      accessorKey: "name",
-      cell: ({ row }) => (
-        <div className="font-semibold text-slate-900">
-          {row.original.name || "(Unnamed)"}{" "}
-          <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{row.original.status}</span>
-          <p className="text-xs text-slate-500">{row.original.disputer || "Unassigned"}</p>
-        </div>
-      ),
-    },
-    {
-      header: "Round",
-      accessorKey: "round",
-      size: 60,
-      cell: ({ getValue }) => {
-        const value = getValue<number | null>();
-        return <span className="text-sm text-slate-700">{value ?? "-"}</span>;
+  const columns = useMemo<ColumnDef<FullClient>[]>(
+    () => [
+      {
+        header: "Client",
+        accessorKey: "name",
+        cell: ({ row }) => (
+          <div className="font-semibold text-slate-900">
+            {row.original.name || "(Unnamed)"} <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{row.original.status}</span>
+            <p className="text-xs text-slate-500">{row.original.disputer || "Unassigned"}</p>
+          </div>
+        ),
       },
-    },
-    {
-      header: "Processed",
-      accessorKey: "dateProcessed",
-      cell: ({ getValue }) => <span className="text-sm text-slate-700">{formatDate(getValue() as string | null)}</span>,
-    },
-    {
-      header: "Next Due",
-      accessorKey: "nextDueDate",
-      cell: ({ row }) => (
-        <div className="flex flex-col gap-1">
-          <span className="text-sm text-slate-800">{formatDate(row.original.nextDueDate)}</span>
-          {statusBadge(row.original)}
-        </div>
-      ),
-    },
-    {
-      header: "Issues",
-      accessorKey: "issues",
-      cell: ({ row }) => {
-        const open = row.original.issues.filter((i) => !i.resolved).length;
-        return (
-          <span
-            className={`rounded-full px-2 py-1 text-xs font-semibold ${
-              open ? "bg-orange-100 text-orange-700" : "bg-emerald-50 text-emerald-700"
-            }`}
-          >
-            {open ? `${open} open` : "Clear"}
-          </span>
-        );
+      {
+        header: "Round",
+        accessorKey: "round",
+        size: 60,
+        cell: ({ getValue }) => {
+          const value = getValue<number | null>();
+          return <span className="text-sm text-slate-700">{value ?? "-"}</span>;
+        },
       },
-    },
-    {
-      header: "Docs Pending",
-      accessorKey: "docs",
-      cell: ({ row }) => {
-        const pending = row.original.docs.filter((d) => d.status === "pending" || d.status === "sent").length;
-        return <span className="text-sm text-slate-700">{pending}</span>;
+      {
+        header: "Processed",
+        accessorKey: "dateProcessed",
+        cell: ({ getValue }) => <span className="text-sm text-slate-700">{formatDate(getValue() as string | null)}</span>,
       },
-    },
-    {
-      header: "Notes",
-      accessorKey: "notes",
-      cell: ({ getValue }) => (
-        <span className="line-clamp-2 text-sm text-slate-600">{(getValue() as string) || "—"}</span>
-      ),
-    },
-    {
-      header: "Actions",
-      accessorKey: "id",
-      cell: ({ row }) =>
-        onDelete ? (
-          <button
-            className="rounded-full bg-rose-500 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-600"
-            onClick={() => onDelete(row.original.id)}
-          >
-            Delete
-          </button>
-        ) : null,
-    },
-  ], [onDelete]);
+      {
+        header: "Next Due",
+        accessorKey: "nextDueDate",
+        cell: ({ row }) => (
+          <div className="flex flex-col gap-1">
+            <span className="text-sm text-slate-800">{formatDate(row.original.nextDueDate)}</span>
+            {statusBadge(row.original)}
+          </div>
+        ),
+      },
+      {
+        header: "Issues",
+        accessorKey: "issues",
+        cell: ({ row }) => {
+          const open = row.original.issues.filter((i) => !i.resolved).length;
+          return (
+            <span
+              className={`rounded-full px-2 py-1 text-xs font-semibold ${
+                open ? "bg-orange-100 text-orange-700" : "bg-emerald-50 text-emerald-700"
+              }`}
+            >
+              {open ? `${open} open` : "Clear"}
+            </span>
+          );
+        },
+      },
+      {
+        header: "Docs Pending",
+        accessorKey: "docs",
+        cell: ({ row }) => {
+          const pending = row.original.docs.filter((d) => d.status === "pending" || d.status === "sent").length;
+          return <span className="text-sm text-slate-700">{pending}</span>;
+        },
+      },
+      {
+        header: "Notes",
+        accessorKey: "notes",
+        cell: ({ getValue }) => (
+          <span className="line-clamp-2 text-sm text-slate-600">{(getValue() as string) || "—"}</span>
+        ),
+      },
+      {
+        header: "Actions",
+        accessorKey: "id",
+        cell: ({ row }) => (
+          <div className="flex gap-2">
+            {onEdit && (
+              <button
+                className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white hover:bg-slate-800"
+                onClick={() => onEdit(row.original)}
+              >
+                Edit
+              </button>
+            )}
+            {onDelete && (
+              <button
+                className="rounded-full bg-rose-500 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-600"
+                onClick={() => onDelete(row.original.id)}
+              >
+                Delete
+              </button>
+            )}
+          </div>
+        ),
+      },
+    ],
+    [onDelete, onEdit],
+  );
 
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
@@ -210,14 +224,24 @@ export function ClientsTable({ data, onDelete }: ClientsTableProps) {
                 <p className="text-xs text-slate-500">Issues</p>
                 <p>{row.issues.filter((i) => !i.resolved).length || "None"}</p>
               </div>
-              {onDelete && (
-                <div className="col-span-2">
-                  <button
-                    className="mt-2 inline-flex items-center gap-1 rounded-full bg-rose-500 px-3 py-1.5 text-xs font-semibold text-white"
-                    onClick={() => onDelete(row.id)}
-                  >
-                    Delete
-                  </button>
+              {(onDelete || onEdit) && (
+                <div className="col-span-2 flex gap-2">
+                  {onEdit && (
+                    <button
+                      className="mt-2 inline-flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white"
+                      onClick={() => onEdit(row)}
+                    >
+                      Edit
+                    </button>
+                  )}
+                  {onDelete && (
+                    <button
+                      className="mt-2 inline-flex items-center gap-1 rounded-full bg-rose-500 px-3 py-1.5 text-xs font-semibold text-white"
+                      onClick={() => onDelete(row.id)}
+                    >
+                      Delete
+                    </button>
+                  )}
                 </div>
               )}
             </div>

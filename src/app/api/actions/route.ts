@@ -8,6 +8,7 @@ import {
   toggleIssueResolved,
   fetchFullClients,
   addClient,
+  upsertClients,
   deleteClient,
 } from "@/lib/db";
 import { IssueRecord, DocRecord, CreditMonitoringRecord, ClientProfile, DocStatus, DocCategory } from "@/types/models";
@@ -84,6 +85,24 @@ export async function POST(req: Request) {
       isNew: true,
     };
     addClient(client);
+    return NextResponse.json({ ok: true, client });
+  }
+
+  if (action === "updateClient") {
+    const client: ClientProfile = {
+      id: body.id,
+      name: body.name || "Unnamed",
+      onboardDate: body.onboardDate || null,
+      disputer: body.disputer || "",
+      status: body.status || "Active",
+      round: Number(body.round || 1),
+      dateProcessed: body.dateProcessed || null,
+      nextDueDate: body.nextDueDate || null,
+      notes: body.notes || "",
+      flags: body.flags || "",
+      isNew: Boolean(body.isNew ?? false),
+    };
+    upsertClients([client]);
     return NextResponse.json({ ok: true, client });
   }
 

@@ -81,6 +81,16 @@ export const addClient = async (client: Partial<ClientProfile> & { name: string 
   return res.json();
 };
 
+export const updateClient = async (client: Partial<ClientProfile> & { id: string }) => {
+  const res = await fetch("/api/actions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "updateClient", ...client }),
+  });
+  if (!res.ok) throw new Error("Could not update client");
+  return res.json();
+};
+
 export const deleteClient = async (clientId: string) => {
   const res = await fetch("/api/actions", {
     method: "POST",
