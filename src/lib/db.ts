@@ -14,6 +14,24 @@ const db = new Database(dbPath);
 // pragma for better concurrency in serverless context
 db.pragma("journal_mode = WAL");
 
+type ClientRow = {
+  id: string;
+  name: string;
+  onboard_date: string | null;
+  disputer: string | null;
+  status: string | null;
+  round: number;
+  date_processed: string | null;
+  next_due_date: string | null;
+  notes: string | null;
+  flags: string | null;
+  is_new: number;
+};
+
+type IssueRow = { id: string; client_id: string; issue_type: string; message_sent: number; message_date: string | null; resolved: number; note: string | null };
+type CmRow = { id: string; client_id: string; platform: string; issue: string; message_sent: number; message_date: string | null; resolved: number };
+type DocRow = { id: string; client_id: string; doc_type: string; status: string; message_sent: number; message_date: string | null; note: string | null; category: string | null };
+
 export function ensureSchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS clients (
@@ -89,6 +107,14 @@ export function upsertClients(clients: ClientProfile[]) {
   trx(clients);
 }
 
+export function addClient(client: ClientProfile) {
+  upsertClients([client]);
+}
+
+export function deleteClient(clientId: string) {
+  db.prepare("DELETE FROM clients WHERE id = ?").run(clientId);
+}
+
 export function replaceAllData(opts: {
   clients: ClientProfile[];
   issues: IssueRecord[];
@@ -148,25 +174,7 @@ export function batchInsertDocs(rows: DocRecord[]) {
 }
 
 export function fetchFullClients() {
-  type ClientRow = {
-    id: string;
-    name: string;
-    onboard_date: string | null;
-    disputer: string | null;
-    status: string | null;
-    round: number;
-    date_processed: string | null;
-    next_due_date: string | null;
-    notes: string | null;
-    flags: string | null;
-    is_new: number;
-  };
-
   const clientRows = db.prepare("SELECT * FROM clients").all() as ClientRow[];
-  type IssueRow = { id: string; client_id: string; issue_type: string; message_sent: number; message_date: string | null; resolved: number; note: string | null };
-  type CmRow = { id: string; client_id: string; platform: string; issue: string; message_sent: number; message_date: string | null; resolved: number };
-  type DocRow = { id: string; client_id: string; doc_type: string; status: string; message_sent: number; message_date: string | null; note: string | null; category: string | null };
-
   const issues = db.prepare("SELECT * FROM issues").all() as IssueRow[];
   const cmIssues = db.prepare("SELECT * FROM cm_issues").all() as CmRow[];
   const docs = db.prepare("SELECT * FROM docs").all() as DocRow[];

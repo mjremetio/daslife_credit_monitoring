@@ -36,9 +36,10 @@ const statusBadge = (record: FullClient) => {
 
 interface ClientsTableProps {
   data: FullClient[];
+  onDelete?: (id: string) => void;
 }
 
-export function ClientsTable({ data }: ClientsTableProps) {
+export function ClientsTable({ data, onDelete }: ClientsTableProps) {
   const [sorting, setSorting] = useState<SortingState>([{ id: "nextDueDate", desc: false }]);
 
   const columns = useMemo<ColumnDef<FullClient>[]>(() => [
@@ -108,7 +109,20 @@ export function ClientsTable({ data }: ClientsTableProps) {
         <span className="line-clamp-2 text-sm text-slate-600">{(getValue() as string) || "—"}</span>
       ),
     },
-  ], []);
+    {
+      header: "Actions",
+      accessorKey: "id",
+      cell: ({ row }) =>
+        onDelete ? (
+          <button
+            className="rounded-full bg-rose-500 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-600"
+            onClick={() => onDelete(row.original.id)}
+          >
+            Delete
+          </button>
+        ) : null,
+    },
+  ], [onDelete]);
 
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
@@ -179,15 +193,15 @@ export function ClientsTable({ data }: ClientsTableProps) {
               </div>
               {statusBadge(row)}
             </div>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-700">
-                <div>
-                  <p className="text-xs text-slate-500">Round</p>
-                  <p className="font-semibold">{row.round ?? "-"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-slate-500">Next Due</p>
-                  <p className="font-semibold">{formatDate(row.nextDueDate)}</p>
-                </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-700">
+              <div>
+                <p className="text-xs text-slate-500">Round</p>
+                <p className="font-semibold">{row.round ?? "-"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Next Due</p>
+                <p className="font-semibold">{formatDate(row.nextDueDate)}</p>
+              </div>
               <div className="col-span-2">
                 <p className="text-xs text-slate-500">Notes</p>
                 <p className="line-clamp-2">{row.notes || "—"}</p>
@@ -196,6 +210,16 @@ export function ClientsTable({ data }: ClientsTableProps) {
                 <p className="text-xs text-slate-500">Issues</p>
                 <p>{row.issues.filter((i) => !i.resolved).length || "None"}</p>
               </div>
+              {onDelete && (
+                <div className="col-span-2">
+                  <button
+                    className="mt-2 inline-flex items-center gap-1 rounded-full bg-rose-500 px-3 py-1.5 text-xs font-semibold text-white"
+                    onClick={() => onDelete(row.id)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         ))}

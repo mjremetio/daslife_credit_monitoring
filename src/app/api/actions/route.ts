@@ -1,7 +1,16 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
-import { addIssue, addDoc, addCmIssue, markProcessed, toggleIssueResolved, fetchFullClients } from "@/lib/db";
-import { IssueRecord, DocRecord, CreditMonitoringRecord, DocStatus, DocCategory } from "@/types/models";
+import {
+  addIssue,
+  addDoc,
+  addCmIssue,
+  markProcessed,
+  toggleIssueResolved,
+  fetchFullClients,
+  addClient,
+  deleteClient,
+} from "@/lib/db";
+import { IssueRecord, DocRecord, CreditMonitoringRecord, ClientProfile, DocStatus, DocCategory } from "@/types/models";
 
 export async function POST(req: Request) {
   const body = await req.json();
@@ -58,6 +67,29 @@ export async function POST(req: Request) {
     };
     addCmIssue(cm);
     return NextResponse.json({ ok: true, cm });
+  }
+
+  if (action === "addClient") {
+    const client: ClientProfile = {
+      id: crypto.randomUUID(),
+      name: body.name || "Unnamed",
+      onboardDate: body.onboardDate || null,
+      disputer: body.disputer || "",
+      status: body.status || "Active",
+      round: Number(body.round || 1),
+      dateProcessed: body.dateProcessed || null,
+      nextDueDate: body.nextDueDate || null,
+      notes: body.notes || "",
+      flags: body.flags || "",
+      isNew: true,
+    };
+    addClient(client);
+    return NextResponse.json({ ok: true, client });
+  }
+
+  if (action === "deleteClient") {
+    deleteClient(body.clientId);
+    return NextResponse.json({ ok: true });
   }
 
   if (action === "snapshot") {

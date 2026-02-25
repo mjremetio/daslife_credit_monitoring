@@ -21,8 +21,8 @@ import {
 } from "lucide-react";
 import { ClientsTable } from "./ClientsTable";
 import { MetricCard } from "./MetricCard";
-import { fetchClients, markProcessed, toggleIssueResolved, addIssue } from "@/lib/api-client";
-import { FullClient, DocRecord, CreditMonitoringRecord } from "@/types/models";
+import { fetchClients, markProcessed, toggleIssueResolved, addIssue, addClient, deleteClient, addDoc, addCmIssue } from "@/lib/api-client";
+import { FullClient, DocRecord, CreditMonitoringRecord, ClientProfile } from "@/types/models";
 import { exportCsv, exportXls } from "@/lib/exporters";
 
 const today = new Date();
@@ -41,6 +41,12 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
   const [activeTab, setActiveTab] = useState<"overview" | "clients" | "ready" | "issues" | "docs" | "cm" | "users">("overview");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [clientForm, setClientForm] = useState<{ name: string; disputer: string; status: ClientProfile["status"]; round: number }>({
+    name: "",
+    disputer: "",
+    status: "Active",
+    round: 1,
+  });
 
   const refresh = async () => {
     setBusy(true);
@@ -125,6 +131,42 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
   const handleQuickIssue = async (payload: { clientId: string; issueType: string; note: string }) => {
     setBusy(true);
     await addIssue({ ...payload, messageSent: false, resolved: false });
+    await refresh();
+    setBusy(false);
+  };
+
+  const handleAddClient = async () => {
+    if (!clientForm.name.trim()) return;
+    setBusy(true);
+    await addClient({
+      name: clientForm.name.trim(),
+      disputer: clientForm.disputer,
+      status: clientForm.status,
+      round: clientForm.round,
+      dateProcessed: new Date().toISOString().slice(0, 10),
+    });
+    setClientForm({ name: "", disputer: "", status: "Active", round: 1 });
+    await refresh();
+    setBusy(false);
+  };
+
+  const handleDeleteClient = async (id: string) => {
+    setBusy(true);
+    await deleteClient(id);
+    await refresh();
+    setBusy(false);
+  };
+
+  const handleAddDoc = async (payload: { clientId: string; docType: string; category: DocRecord["category"] }) => {
+    setBusy(true);
+    await addDoc({ ...payload, status: "pending", messageSent: false });
+    await refresh();
+    setBusy(false);
+  };
+
+  const handleAddCm = async (payload: { clientId: string; platform: string; issue: string }) => {
+    setBusy(true);
+    await addCmIssue({ ...payload, messageSent: false, resolved: false });
     await refresh();
     setBusy(false);
   };
@@ -343,10 +385,10 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
       )}
 
       {/* Docs */}
-      {activeTab === "docs" && <DocsSection docs={docs} />}
+      {activeTab === "docs" && <DocsSection docs={docs} clients={clients} onAdd={handleAddDoc} />}
 
       {/* Credit Monitoring */}
-      {activeTab === "cm" && <CreditMonitoringSection cmIssues={cmIssues} />}
+      {activeTab === "cm" && <CreditMonitoringSection cmIssues={cmIssues} clients={clients} onAdd={handleAddCm} />}
 
       {/* Users / Disputers */}
       {activeTab === "users" && <UsersSection clients={clients} />}
@@ -392,13 +434,54 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
                 </select>
               </div>
             </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-4">
+              <input
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                placeholder="Client name"
+                value={clientForm.name}
+                onChange={(e) => setClientForm({ ...clientForm, name: e.target.value })}
+              />
+              <input
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                placeholder="Disputer"
+                value={clientForm.disputer}
+                onChange={(e) => setClientForm({ ...clientForm, disputer: e.target.value })}
+              />
+              <select
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                value={clientForm.status}
+                onChange={(e) => setClientForm({ ...clientForm, status: e.target.value as ClientProfile["status"] })}
+              >
+                {(["Active", "On Hold", "Completed", "Dropped"] as const).map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                  value={clientForm.round}
+                  onChange={(e) => setClientForm({ ...clientForm, round: Number(e.target.value) || 1 })}
+                />
+                <button
+                  className="rounded-xl bg-emerald-500 px-3 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600 disabled:opacity-50"
+                  onClick={handleAddClient}
+                  disabled={busy}
+                >
+                  Add
+                </button>
+              </div>
+            </div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-900">Client Master List</h2>
               <span className="text-xs text-slate-500">Search & filter above, sort columns in table.</span>
             </div>
-            <ClientsTable data={filtered} />
+            <ClientsTable data={filtered} onDelete={handleDeleteClient} />
           </div>
         </section>
       )}
@@ -467,7 +550,15 @@ function QuickIssueForm({ clients, onSubmit, busy }: { clients: FullClient[]; on
 type DocWithClient = { client: FullClient; doc: DocRecord };
 type CmWithClient = { client: FullClient; cm: CreditMonitoringRecord };
 
-function DocsSection({ docs }: { docs: DocWithClient[] }) {
+function DocsSection({
+  docs,
+  clients,
+  onAdd,
+}: {
+  docs: DocWithClient[];
+  clients: FullClient[];
+  onAdd: (payload: { clientId: string; docType: string; category: DocRecord["category"] }) => void;
+}) {
   const completing = docs.filter(({ doc }) => doc.category === "completing");
   const updating = docs.filter(({ doc }) => doc.category === "updating");
 
@@ -509,6 +600,22 @@ function DocsSection({ docs }: { docs: DocWithClient[] }) {
         <h2 className="text-lg font-semibold text-slate-900">Document Trackers</h2>
         <span className="text-xs text-slate-500">Completing vs Updating</span>
       </div>
+      <div className="mb-4 grid gap-2 md:grid-cols-4">
+        <select
+          className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+          onChange={(e) => onAdd({ clientId: e.target.value, docType: "ID", category: "completing" })}
+          defaultValue=""
+        >
+          <option value="" disabled>
+            Quick-add doc for client
+          </option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      </div>
       <div className="grid gap-4 md:grid-cols-2">
         <div>
           <h3 className="mb-2 text-sm font-semibold text-slate-800">Completing Docs</h3>
@@ -523,12 +630,36 @@ function DocsSection({ docs }: { docs: DocWithClient[] }) {
   );
 }
 
-function CreditMonitoringSection({ cmIssues }: { cmIssues: CmWithClient[] }) {
+function CreditMonitoringSection({
+  cmIssues,
+  clients,
+  onAdd,
+}: {
+  cmIssues: CmWithClient[];
+  clients: FullClient[];
+  onAdd: (payload: { clientId: string; platform: string; issue: string }) => void;
+}) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-slate-900">Credit Monitoring Issues</h2>
         <span className="text-xs text-slate-500">Smart Credit / MFSN / Other</span>
+      </div>
+      <div className="mb-4 grid gap-2 md:grid-cols-3">
+        <select
+          className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+          defaultValue=""
+          onChange={(e) => e.target.value && onAdd({ clientId: e.target.value, platform: "Smart Credit", issue: "Follow-up" })}
+        >
+          <option value="" disabled>
+            Quick-add CM issue for client
+          </option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-slate-200 text-sm">

@@ -70,3 +70,23 @@ export const addCmIssue = async (cm: Partial<CreditMonitoringRecord> & { clientI
   if (!res.ok) throw new Error("Could not add credit monitoring issue");
   return res.json();
 };
+
+export const addClient = async (client: Partial<ClientProfile> & { name: string }) => {
+  const res = await fetch("/api/actions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "addClient", ...client }),
+  });
+  if (!res.ok) throw new Error("Could not add client");
+  return res.json();
+};
+
+export const deleteClient = async (clientId: string) => {
+  const res = await fetch("/api/actions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "deleteClient", clientId }),
+  });
+  if (!res.ok) throw new Error("Could not delete client");
+  return res.json();
+};
