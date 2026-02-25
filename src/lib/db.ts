@@ -304,11 +304,31 @@ export function addIssue(row: IssueRecord) {
   });
 }
 
+export function updateIssue(row: IssueRecord) {
+  db.prepare(
+    "UPDATE issues SET issue_type = ?, message_sent = ?, message_date = ?, resolved = ?, note = ? WHERE id = ?",
+  ).run(row.issueType, row.messageSent ? 1 : 0, row.messageDate, row.resolved ? 1 : 0, row.note ?? "", row.id);
+}
+
+export function deleteIssue(issueId: string) {
+  db.prepare("DELETE FROM issues WHERE id = ?").run(issueId);
+}
+
 export function addDoc(row: DocRecord) {
   insertDoc.run({
     ...row,
     messageSent: row.messageSent ? 1 : 0,
   });
+}
+
+export function updateDoc(row: DocRecord) {
+  db.prepare(
+    "UPDATE docs SET doc_type = ?, status = ?, message_sent = ?, message_date = ?, note = ?, category = ? WHERE id = ?",
+  ).run(row.docType, row.status, row.messageSent ? 1 : 0, row.messageDate, row.note ?? "", row.category, row.id);
+}
+
+export function deleteDoc(docId: string) {
+  db.prepare("DELETE FROM docs WHERE id = ?").run(docId);
 }
 
 export function addCmIssue(row: CreditMonitoringRecord) {
@@ -317,6 +337,16 @@ export function addCmIssue(row: CreditMonitoringRecord) {
     messageSent: row.messageSent ? 1 : 0,
     resolved: row.resolved ? 1 : 0,
   });
+}
+
+export function updateCmIssue(row: CreditMonitoringRecord) {
+  db.prepare(
+    "UPDATE cm_issues SET platform = ?, issue = ?, message_sent = ?, message_date = ?, resolved = ? WHERE id = ?",
+  ).run(row.platform, row.issue, row.messageSent ? 1 : 0, row.messageDate, row.resolved ? 1 : 0, row.id);
+}
+
+export function deleteCmIssue(cmId: string) {
+  db.prepare("DELETE FROM cm_issues WHERE id = ?").run(cmId);
 }
 
 export function fetchUsers(): User[] {

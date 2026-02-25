@@ -10,6 +10,12 @@ import {
   addClient,
   upsertClients,
   deleteClient,
+  updateIssue,
+  deleteIssue,
+  updateDoc,
+  deleteDoc,
+  updateCmIssue,
+  deleteCmIssue,
 } from "@/lib/db";
 import { IssueRecord, DocRecord, CreditMonitoringRecord, ClientProfile, DocStatus, DocCategory } from "@/types/models";
 
@@ -41,6 +47,25 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, issue });
   }
 
+  if (action === "updateIssue") {
+    const issue: IssueRecord = {
+      id: body.id,
+      clientId: body.clientId,
+      issueType: body.issueType || "",
+      messageSent: Boolean(body.messageSent),
+      messageDate: body.messageDate || null,
+      resolved: Boolean(body.resolved),
+      note: body.note || "",
+    };
+    updateIssue(issue);
+    return NextResponse.json({ ok: true, issue });
+  }
+
+  if (action === "deleteIssue") {
+    deleteIssue(body.issueId);
+    return NextResponse.json({ ok: true });
+  }
+
   if (action === "addDoc") {
     const doc: DocRecord = {
       id: crypto.randomUUID(),
@@ -56,6 +81,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, doc });
   }
 
+  if (action === "updateDoc") {
+    const doc: DocRecord = {
+      id: body.id,
+      clientId: body.clientId,
+      docType: body.docType || "Document",
+      status: (body.status || "pending") as DocStatus,
+      messageSent: Boolean(body.messageSent),
+      messageDate: body.messageDate || null,
+      note: body.note || "",
+      category: (body.category || "completing") as DocCategory,
+    };
+    updateDoc(doc);
+    return NextResponse.json({ ok: true, doc });
+  }
+
+  if (action === "deleteDoc") {
+    deleteDoc(body.docId);
+    return NextResponse.json({ ok: true });
+  }
+
   if (action === "addCmIssue") {
     const cm: CreditMonitoringRecord = {
       id: crypto.randomUUID(),
@@ -68,6 +113,25 @@ export async function POST(req: Request) {
     };
     addCmIssue(cm);
     return NextResponse.json({ ok: true, cm });
+  }
+
+  if (action === "updateCmIssue") {
+    const cm: CreditMonitoringRecord = {
+      id: body.id,
+      clientId: body.clientId,
+      platform: body.platform || "Smart Credit",
+      issue: body.issue || "",
+      messageSent: Boolean(body.messageSent),
+      messageDate: body.messageDate || null,
+      resolved: Boolean(body.resolved),
+    };
+    updateCmIssue(cm);
+    return NextResponse.json({ ok: true, cm });
+  }
+
+  if (action === "deleteCmIssue") {
+    deleteCmIssue(body.cmId);
+    return NextResponse.json({ ok: true });
   }
 
   if (action === "addClient") {

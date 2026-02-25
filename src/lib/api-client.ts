@@ -52,6 +52,26 @@ export const addIssue = async (issue: Partial<IssueRecord> & { clientId: string 
   return res.json();
 };
 
+export const updateIssue = async (issue: IssueRecord) => {
+  const res = await fetch("/api/actions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "updateIssue", ...issue }),
+  });
+  if (!res.ok) throw new Error("Could not update issue");
+  return res.json();
+};
+
+export const deleteIssue = async (issueId: string) => {
+  const res = await fetch("/api/actions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "deleteIssue", issueId }),
+  });
+  if (!res.ok) throw new Error("Could not delete issue");
+  return res.json();
+};
+
 export const addDoc = async (doc: Partial<DocRecord> & { clientId: string }) => {
   const res = await fetch("/api/actions", {
     method: "POST",
@@ -62,6 +82,26 @@ export const addDoc = async (doc: Partial<DocRecord> & { clientId: string }) => 
   return res.json();
 };
 
+export const updateDoc = async (doc: DocRecord) => {
+  const res = await fetch("/api/actions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "updateDoc", ...doc }),
+  });
+  if (!res.ok) throw new Error("Could not update doc");
+  return res.json();
+};
+
+export const deleteDoc = async (docId: string) => {
+  const res = await fetch("/api/actions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "deleteDoc", docId }),
+  });
+  if (!res.ok) throw new Error("Could not delete doc");
+  return res.json();
+};
+
 export const addCmIssue = async (cm: Partial<CreditMonitoringRecord> & { clientId: string }) => {
   const res = await fetch("/api/actions", {
     method: "POST",
@@ -69,6 +109,26 @@ export const addCmIssue = async (cm: Partial<CreditMonitoringRecord> & { clientI
     body: JSON.stringify({ action: "addCmIssue", ...cm }),
   });
   if (!res.ok) throw new Error("Could not add credit monitoring issue");
+  return res.json();
+};
+
+export const updateCmIssue = async (cm: CreditMonitoringRecord) => {
+  const res = await fetch("/api/actions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "updateCmIssue", ...cm }),
+  });
+  if (!res.ok) throw new Error("Could not update credit monitoring issue");
+  return res.json();
+};
+
+export const deleteCmIssue = async (cmId: string) => {
+  const res = await fetch("/api/actions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "deleteCmIssue", cmId }),
+  });
+  if (!res.ok) throw new Error("Could not delete credit monitoring issue");
   return res.json();
 };
 

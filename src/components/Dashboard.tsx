@@ -3,14 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { addDays, isWithinInterval, parseISO } from "date-fns";
 import {
-  AlertTriangle,
   CalendarDays,
   Check,
   FileSpreadsheet,
   RefreshCcw,
   Search,
   Send,
-  ShieldAlert,
   LayoutDashboard,
   ListChecks,
   Shield,
@@ -31,8 +29,14 @@ import {
   deleteClient,
   addDoc,
   addCmIssue,
+  updateIssue,
+  deleteIssue,
+  updateDoc,
+  deleteDoc,
+  updateCmIssue,
+  deleteCmIssue,
 } from "@/lib/api-client";
-import { FullClient, DocRecord, CreditMonitoringRecord, ClientProfile, User } from "@/types/models";
+import { FullClient, DocRecord, CreditMonitoringRecord, ClientProfile, User, IssueRecord } from "@/types/models";
 import { exportCsv, exportXls } from "@/lib/exporters";
 import { Modal } from "./Modal";
 import {
@@ -75,6 +79,37 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
     role: "Disputer",
     status: "Active",
   });
+  const [issueModalOpen, setIssueModalOpen] = useState(false);
+  const [editingIssue, setEditingIssue] = useState<IssueRecord | null>(null);
+  const [issueForm, setIssueForm] = useState<{ clientId: string; issueType: string; note: string; messageSent: boolean; messageDate: string | null; resolved: boolean }>({
+    clientId: initialClients[0]?.id ?? "",
+    issueType: "Proof of Address",
+    note: "",
+    messageSent: false,
+    messageDate: null,
+    resolved: false,
+  });
+  const [docModalOpen, setDocModalOpen] = useState(false);
+  const [editingDoc, setEditingDoc] = useState<DocRecord | null>(null);
+  const [docForm, setDocForm] = useState<{ clientId: string; docType: string; status: DocRecord["status"]; category: DocRecord["category"]; messageSent: boolean; messageDate: string | null; note: string }>({
+    clientId: initialClients[0]?.id ?? "",
+    docType: "ID",
+    status: "pending",
+    category: "completing",
+    messageSent: false,
+    messageDate: null,
+    note: "",
+  });
+  const [cmModalOpen, setCmModalOpen] = useState(false);
+  const [editingCm, setEditingCm] = useState<CreditMonitoringRecord | null>(null);
+  const [cmForm, setCmForm] = useState<{ clientId: string; platform: string; issue: string; messageSent: boolean; messageDate: string | null; resolved: boolean }>({
+    clientId: initialClients[0]?.id ?? "",
+    platform: "Smart Credit",
+    issue: "",
+    messageSent: false,
+    messageDate: null,
+    resolved: false,
+  });
 
   const refresh = async () => {
     setBusy(true);
@@ -92,6 +127,14 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
   useEffect(() => {
     refresh();
   }, []);
+
+  useEffect(() => {
+    if (clients.length > 0) {
+      if (!issueForm.clientId) setIssueForm((prev) => ({ ...prev, clientId: clients[0].id }));
+      if (!docForm.clientId) setDocForm((prev) => ({ ...prev, clientId: clients[0].id }));
+      if (!cmForm.clientId) setCmForm((prev) => ({ ...prev, clientId: clients[0].id }));
+    }
+  }, [clients, issueForm.clientId, docForm.clientId, cmForm.clientId]);
 
   const filtered = useMemo(() => {
     const term = search.toLowerCase();
@@ -161,9 +204,33 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
     setBusy(false);
   };
 
-  const handleQuickIssue = async (payload: { clientId: string; issueType: string; note: string }) => {
+  const handleSaveIssue = async () => {
+    if (!issueForm.clientId) return;
     setBusy(true);
-    await addIssue({ ...payload, messageSent: false, resolved: false });
+    const payload: IssueRecord = {
+      id: editingIssue?.id || "",
+      clientId: issueForm.clientId,
+      issueType: issueForm.issueType,
+      messageSent: issueForm.messageSent,
+      messageDate: issueForm.messageSent ? issueForm.messageDate || new Date().toISOString().slice(0, 10) : null,
+      resolved: issueForm.resolved,
+      note: issueForm.note,
+    };
+    if (editingIssue) {
+      await updateIssue(payload);
+    } else {
+      await addIssue({ ...payload, id: undefined });
+    }
+    setIssueForm((prev) => ({ ...prev, note: "", issueType: "Proof of Address", resolved: false, messageSent: false, messageDate: null }));
+    setEditingIssue(null);
+    setIssueModalOpen(false);
+    await refresh();
+    setBusy(false);
+  };
+
+  const handleDeleteIssue = async (issueId: string) => {
+    setBusy(true);
+    await deleteIssue(issueId);
     await refresh();
     setBusy(false);
   };
@@ -200,16 +267,75 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
     setBusy(false);
   };
 
-  const handleAddDoc = async (payload: { clientId: string; docType: string; category: DocRecord["category"] }) => {
+  const handleSaveDoc = async () => {
+    if (!docForm.clientId || !docForm.docType.trim()) return;
     setBusy(true);
-    await addDoc({ ...payload, status: "pending", messageSent: false });
+    const payload: DocRecord = {
+      id: editingDoc?.id || "",
+      clientId: docForm.clientId,
+      docType: docForm.docType,
+      status: docForm.status,
+      messageSent: docForm.messageSent,
+      messageDate: docForm.messageSent ? docForm.messageDate || new Date().toISOString().slice(0, 10) : null,
+      note: docForm.note,
+      category: docForm.category,
+    };
+    if (editingDoc) {
+      await updateDoc(payload);
+    } else {
+      await addDoc({ ...payload, id: undefined });
+    }
+    setDocForm((prev) => ({ ...prev, note: "", docType: "ID", status: "pending", messageSent: false, messageDate: null }));
+    setEditingDoc(null);
+    setDocModalOpen(false);
     await refresh();
     setBusy(false);
   };
 
-  const handleAddCm = async (payload: { clientId: string; platform: string; issue: string }) => {
+  const handleDeleteDoc = async (docId: string) => {
     setBusy(true);
-    await addCmIssue({ ...payload, messageSent: false, resolved: false });
+    await deleteDoc(docId);
+    await refresh();
+    setBusy(false);
+  };
+
+  const handleSaveCm = async () => {
+    if (!cmForm.clientId || !cmForm.platform.trim()) return;
+    setBusy(true);
+    const payload: CreditMonitoringRecord = {
+      id: editingCm?.id || "",
+      clientId: cmForm.clientId,
+      platform: cmForm.platform,
+      issue: cmForm.issue,
+      messageSent: cmForm.messageSent,
+      messageDate: cmForm.messageSent ? cmForm.messageDate || new Date().toISOString().slice(0, 10) : null,
+      resolved: cmForm.resolved,
+    };
+    if (editingCm) {
+      await updateCmIssue(payload);
+    } else {
+      await addCmIssue({ ...payload, id: undefined });
+    }
+    setEditingCm(null);
+    setCmModalOpen(false);
+    setCmForm((prev) => ({ ...prev, issue: "", messageSent: false, messageDate: null, resolved: false }));
+    await refresh();
+    setBusy(false);
+  };
+
+  const handleDeleteCm = async (cmId: string) => {
+    setBusy(true);
+    await deleteCmIssue(cmId);
+    await refresh();
+    setBusy(false);
+  };
+
+  const handleToggleCmResolved = async (cmId: string, resolved: boolean) => {
+    setBusy(true);
+    const found = cmIssues.find(({ cm }) => cm.id === cmId)?.cm;
+    if (found) {
+      await updateCmIssue({ ...found, resolved });
+    }
     await refresh();
     setBusy(false);
   };
@@ -385,75 +511,173 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
 
       {/* Issues */}
       {activeTab === "issues" && (
-        <div className="grid gap-6 md:grid-cols-2">
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-3 flex items-center justify-between">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
               <h2 className="text-lg font-semibold text-slate-900">Dues with Issues</h2>
-              <div className="text-xs text-slate-500">Toggle to resolve</div>
+              <p className="text-xs text-slate-500">Edit, resolve, or delete issues per client.</p>
             </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-200 text-sm">
-                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                  <tr>
-                    <th className="px-3 py-2 text-left">Client</th>
-                    <th className="px-3 py-2 text-left">Issue</th>
-                    <th className="px-3 py-2 text-left">Message</th>
-                    <th className="px-3 py-2 text-left">Resolved</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {issues.map(({ client, issue }) => (
-                    <tr key={issue.id}>
-                      <td className="px-3 py-2 font-semibold text-slate-900">{client.name}</td>
-                      <td className="px-3 py-2 text-slate-700">{issue.issueType || "(unspecified)"}</td>
-                      <td className="px-3 py-2 text-slate-700">
-                        {issue.messageSent ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-700">
-                            <Send size={12} /> {issue.messageDate || "sent"}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-slate-500">Not sent</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-slate-600">
-                          <input
-                            type="checkbox"
-                            checked={issue.resolved}
-                            onChange={(e) => handleResolveIssue(issue.id, e.target.checked)}
-                          />
-                          {issue.resolved ? "Resolved" : "Open"}
-                        </label>
-                      </td>
-                    </tr>
-                  ))}
-                  {issues.length === 0 && (
-                    <tr>
-                      <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={4}>
-                        No issues logged.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <button
+              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800"
+              onClick={() => {
+                setEditingIssue(null);
+                setIssueForm({
+                  clientId: clients[0]?.id ?? "",
+                  issueType: "Proof of Address",
+                  note: "",
+                  messageSent: false,
+                  messageDate: null,
+                  resolved: false,
+                });
+                setIssueModalOpen(true);
+              }}
+            >
+              + Add Issue
+            </button>
           </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-slate-900">Quick add issue</h2>
-              <ShieldAlert size={18} className="text-orange-500" />
-            </div>
-            <QuickIssueForm clients={clients} onSubmit={handleQuickIssue} busy={busy} />
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-3 py-2 text-left">Client</th>
+                  <th className="px-3 py-2 text-left">Issue</th>
+                  <th className="px-3 py-2 text-left">Message</th>
+                  <th className="px-3 py-2 text-left">Resolved</th>
+                  <th className="px-3 py-2 text-left">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {issues.map(({ client, issue }) => (
+                  <tr key={issue.id}>
+                    <td className="px-3 py-2 font-semibold text-slate-900">{client.name}</td>
+                    <td className="px-3 py-2 text-slate-700">{issue.issueType || "(unspecified)"}</td>
+                    <td className="px-3 py-2 text-slate-700">
+                      {issue.messageSent ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-700">
+                          <Send size={12} /> {issue.messageDate || "sent"}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-500">Not sent</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={issue.resolved}
+                          onChange={(e) => handleResolveIssue(issue.id, e.target.checked)}
+                        />
+                        {issue.resolved ? "Resolved" : "Open"}
+                      </label>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex gap-2">
+                        <button
+                          className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white"
+                          onClick={() => {
+                            setEditingIssue(issue);
+                            setIssueForm({
+                              clientId: issue.clientId,
+                              issueType: issue.issueType,
+                              note: issue.note,
+                              messageSent: issue.messageSent,
+                              messageDate: issue.messageDate,
+                              resolved: issue.resolved,
+                            });
+                            setIssueModalOpen(true);
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="rounded-full bg-rose-500 px-3 py-1 text-xs font-semibold text-white"
+                          onClick={() => handleDeleteIssue(issue.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {issues.length === 0 && (
+                  <tr>
+                    <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={5}>
+                      No issues logged.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
 
       {/* Docs */}
-      {activeTab === "docs" && <DocsSection docs={docs} clients={clients} onAdd={handleAddDoc} />}
+      {activeTab === "docs" && (
+        <DocsSection
+          docs={docs}
+          onAddClick={() => {
+            setEditingDoc(null);
+            setDocForm({
+              clientId: clients[0]?.id ?? "",
+              docType: "ID",
+              status: "pending",
+              category: "completing",
+              messageSent: false,
+              messageDate: null,
+              note: "",
+            });
+            setDocModalOpen(true);
+          }}
+          onEdit={(doc) => {
+            setEditingDoc(doc);
+            setDocForm({
+              clientId: doc.clientId,
+              docType: doc.docType,
+              status: doc.status,
+              category: doc.category,
+              messageSent: doc.messageSent,
+              messageDate: doc.messageDate,
+              note: doc.note,
+            });
+            setDocModalOpen(true);
+          }}
+          onDelete={handleDeleteDoc}
+        />
+      )}
 
       {/* Credit Monitoring */}
-      {activeTab === "cm" && <CreditMonitoringSection cmIssues={cmIssues} clients={clients} onAdd={handleAddCm} />}
+      {activeTab === "cm" && (
+        <CreditMonitoringSection
+          cmIssues={cmIssues}
+          onAddClick={() => {
+            setEditingCm(null);
+            setCmForm({
+              clientId: clients[0]?.id ?? "",
+              platform: "Smart Credit",
+              issue: "",
+              messageSent: false,
+              messageDate: null,
+              resolved: false,
+            });
+            setCmModalOpen(true);
+          }}
+          onEditClick={(cm) => {
+            setEditingCm(cm);
+            setCmForm({
+              clientId: cm.clientId,
+              platform: cm.platform,
+              issue: cm.issue,
+              messageSent: cm.messageSent,
+              messageDate: cm.messageDate,
+              resolved: cm.resolved,
+            });
+            setCmModalOpen(true);
+          }}
+          onToggleResolved={handleToggleCmResolved}
+          onDelete={handleDeleteCm}
+        />
+      )}
 
       {/* Users / Disputers */}
       {activeTab === "users" && (
@@ -571,65 +795,41 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
         form={userForm}
         setForm={setUserForm}
       />
+      <IssueModal
+        open={issueModalOpen}
+        onClose={() => {
+          setIssueModalOpen(false);
+          setEditingIssue(null);
+        }}
+        onSave={handleSaveIssue}
+        form={issueForm}
+        setForm={setIssueForm}
+        clients={clients}
+      />
+      <DocModal
+        open={docModalOpen}
+        onClose={() => {
+          setDocModalOpen(false);
+          setEditingDoc(null);
+        }}
+        onSave={handleSaveDoc}
+        form={docForm}
+        setForm={setDocForm}
+        clients={clients}
+      />
+      <CmModal
+        open={cmModalOpen}
+        onClose={() => {
+          setCmModalOpen(false);
+          setEditingCm(null);
+        }}
+        onSave={handleSaveCm}
+        form={cmForm}
+        setForm={setCmForm}
+        clients={clients}
+      />
       </div>
     </div>
-  );
-}
-
-function QuickIssueForm({ clients, onSubmit, busy }: { clients: FullClient[]; onSubmit: (p: { clientId: string; issueType: string; note: string }) => void; busy: boolean }) {
-  const [clientId, setClientId] = useState(clients[0]?.id ?? "");
-  const [issueType, setIssueType] = useState("Proof of Address");
-  const [note, setNote] = useState("");
-
-  return (
-    <form
-      className="space-y-3"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!clientId) return;
-        onSubmit({ clientId, issueType, note });
-        setNote("");
-      }}
-    >
-      <div className="flex flex-col gap-1">
-        <label className="text-xs font-semibold text-slate-600">Client</label>
-        <select
-          className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-          value={clientId}
-          onChange={(e) => setClientId(e.target.value)}
-        >
-          {clients.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="flex flex-col gap-1">
-        <label className="text-xs font-semibold text-slate-600">Issue type</label>
-        <input
-          className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-          value={issueType}
-          onChange={(e) => setIssueType(e.target.value)}
-        />
-      </div>
-      <div className="flex flex-col gap-1">
-        <label className="text-xs font-semibold text-slate-600">Note</label>
-        <textarea
-          className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-          rows={3}
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-        />
-      </div>
-      <button
-        type="submit"
-        className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-orange-600 disabled:opacity-50"
-        disabled={busy || !clientId}
-      >
-        <AlertTriangle size={16} /> Add issue
-      </button>
-    </form>
   );
 }
 
@@ -638,12 +838,14 @@ type CmWithClient = { client: FullClient; cm: CreditMonitoringRecord };
 
 function DocsSection({
   docs,
-  clients,
-  onAdd,
+  onAddClick,
+  onEdit,
+  onDelete,
 }: {
   docs: DocWithClient[];
-  clients: FullClient[];
-  onAdd: (payload: { clientId: string; docType: string; category: DocRecord["category"] }) => void;
+  onAddClick: () => void;
+  onEdit: (doc: DocRecord) => void;
+  onDelete: (id: string) => void;
 }) {
   const completing = docs.filter(({ doc }) => doc.category === "completing");
   const updating = docs.filter(({ doc }) => doc.category === "updating");
@@ -657,6 +859,7 @@ function DocsSection({
             <th className="px-3 py-2 text-left">Doc</th>
             <th className="px-3 py-2 text-left">Status</th>
             <th className="px-3 py-2 text-left">Message</th>
+            <th className="px-3 py-2 text-left">Actions</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -666,11 +869,27 @@ function DocsSection({
               <td className="px-3 py-2 text-slate-700">{doc.docType}</td>
               <td className="px-3 py-2 text-slate-700 capitalize">{doc.status}</td>
               <td className="px-3 py-2 text-slate-700">{doc.messageSent ? doc.messageDate || "sent" : "—"}</td>
+              <td className="px-3 py-2">
+                <div className="flex gap-2">
+                  <button
+                    className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white"
+                    onClick={() => onEdit(doc)}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    className="rounded-full bg-rose-500 px-3 py-1 text-xs font-semibold text-white"
+                    onClick={() => onDelete(doc.id)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </td>
             </tr>
           ))}
           {rows.length === 0 && (
             <tr>
-              <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={4}>
+              <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={5}>
                 No items.
               </td>
             </tr>
@@ -683,24 +902,16 @@ function DocsSection({
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-slate-900">Document Trackers</h2>
-        <span className="text-xs text-slate-500">Completing vs Updating</span>
-      </div>
-      <div className="mb-4 grid gap-2 md:grid-cols-4">
-        <select
-          className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-          onChange={(e) => onAdd({ clientId: e.target.value, docType: "ID", category: "completing" })}
-          defaultValue=""
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Document Trackers</h2>
+          <span className="text-xs text-slate-500">Completing vs Updating</span>
+        </div>
+        <button
+          className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800"
+          onClick={onAddClick}
         >
-          <option value="" disabled>
-            Quick-add doc for client
-          </option>
-          {clients.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
+          + Add Doc
+        </button>
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         <div>
@@ -718,34 +929,30 @@ function DocsSection({
 
 function CreditMonitoringSection({
   cmIssues,
-  clients,
-  onAdd,
+  onAddClick,
+  onEditClick,
+  onToggleResolved,
+  onDelete,
 }: {
   cmIssues: CmWithClient[];
-  clients: FullClient[];
-  onAdd: (payload: { clientId: string; platform: string; issue: string }) => void;
+  onAddClick: () => void;
+  onEditClick: (cm: CreditMonitoringRecord) => void;
+  onToggleResolved: (id: string, resolved: boolean) => void;
+  onDelete: (id: string) => void;
 }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-slate-900">Credit Monitoring Issues</h2>
-        <span className="text-xs text-slate-500">Smart Credit / MFSN / Other</span>
-      </div>
-      <div className="mb-4 grid gap-2 md:grid-cols-3">
-        <select
-          className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-          defaultValue=""
-          onChange={(e) => e.target.value && onAdd({ clientId: e.target.value, platform: "Smart Credit", issue: "Follow-up" })}
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Credit Monitoring Issues</h2>
+          <span className="text-xs text-slate-500">Smart Credit / MFSN / Other</span>
+        </div>
+        <button
+          className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800"
+          onClick={onAddClick}
         >
-          <option value="" disabled>
-            Quick-add CM issue for client
-          </option>
-          {clients.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
+          + Add CM Issue
+        </button>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
@@ -756,6 +963,7 @@ function CreditMonitoringSection({
               <th className="px-3 py-2 text-left">Issue</th>
               <th className="px-3 py-2 text-left">Message</th>
               <th className="px-3 py-2 text-left">Resolved</th>
+              <th className="px-3 py-2 text-left">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -765,12 +973,37 @@ function CreditMonitoringSection({
                 <td className="px-3 py-2 text-slate-700">{cm.platform}</td>
                 <td className="px-3 py-2 text-slate-700">{cm.issue}</td>
                 <td className="px-3 py-2 text-slate-700">{cm.messageSent ? cm.messageDate || "sent" : "—"}</td>
-                <td className="px-3 py-2 text-slate-700">{cm.resolved ? "Yes" : "No"}</td>
+                <td className="px-3 py-2 text-slate-700">
+                  <label className="inline-flex items-center gap-2 text-xs text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={cm.resolved}
+                      onChange={(e) => onToggleResolved(cm.id, e.target.checked)}
+                    />
+                    {cm.resolved ? "Resolved" : "Open"}
+                  </label>
+                </td>
+                <td className="px-3 py-2">
+                  <div className="flex gap-2">
+                    <button
+                      className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white"
+                      onClick={() => onEditClick(cm)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="rounded-full bg-rose-500 px-3 py-1 text-xs font-semibold text-white"
+                      onClick={() => onDelete(cm.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </td>
               </tr>
             ))}
             {cmIssues.length === 0 && (
               <tr>
-                <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={5}>
+                <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={6}>
                   No credit monitoring issues.
                 </td>
               </tr>
@@ -1039,6 +1272,295 @@ function UserModal({
             className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600"
             onClick={onSave}
           >
+            Save
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function IssueModal({
+  open,
+  onClose,
+  onSave,
+  form,
+  setForm,
+  clients,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSave: () => void;
+  form: { clientId: string; issueType: string; note: string; messageSent: boolean; messageDate: string | null; resolved: boolean };
+  setForm: (f: { clientId: string; issueType: string; note: string; messageSent: boolean; messageDate: string | null; resolved: boolean }) => void;
+  clients: FullClient[];
+}) {
+  return (
+    <Modal title="Issue" open={open} onClose={onClose}>
+      <div className="space-y-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">Client</label>
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={form.clientId}
+            onChange={(e) => setForm({ ...form, clientId: e.target.value })}
+          >
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">Issue type</label>
+          <input
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={form.issueType}
+            onChange={(e) => setForm({ ...form, issueType: e.target.value })}
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">Note</label>
+          <textarea
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            rows={3}
+            value={form.note}
+            onChange={(e) => setForm({ ...form, note: e.target.value })}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={form.messageSent}
+              onChange={(e) => setForm({ ...form, messageSent: e.target.checked })}
+            />
+            Message sent
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={form.resolved}
+              onChange={(e) => setForm({ ...form, resolved: e.target.checked })}
+            />
+            Resolved
+          </label>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">Message date</label>
+          <input
+            type="date"
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={form.messageDate || ""}
+            onChange={(e) => setForm({ ...form, messageDate: e.target.value })}
+            disabled={!form.messageSent}
+          />
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <button className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600" onClick={onSave}>
+            Save
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function DocModal({
+  open,
+  onClose,
+  onSave,
+  form,
+  setForm,
+  clients,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSave: () => void;
+  form: { clientId: string; docType: string; status: DocRecord["status"]; category: DocRecord["category"]; messageSent: boolean; messageDate: string | null; note: string };
+  setForm: (f: { clientId: string; docType: string; status: DocRecord["status"]; category: DocRecord["category"]; messageSent: boolean; messageDate: string | null; note: string }) => void;
+  clients: FullClient[];
+}) {
+  return (
+    <Modal title="Document" open={open} onClose={onClose}>
+      <div className="space-y-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">Client</label>
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={form.clientId}
+            onChange={(e) => setForm({ ...form, clientId: e.target.value })}
+          >
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">Document type</label>
+          <input
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={form.docType}
+            onChange={(e) => setForm({ ...form, docType: e.target.value })}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">Category</label>
+            <select
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={form.category}
+              onChange={(e) => setForm({ ...form, category: e.target.value as DocRecord["category"] })}
+            >
+              <option value="completing">Completing</option>
+              <option value="updating">Updating</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">Status</label>
+            <select
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={form.status}
+              onChange={(e) => setForm({ ...form, status: e.target.value as DocRecord["status"] })}
+            >
+              <option value="pending">Pending</option>
+              <option value="sent">Sent</option>
+              <option value="received">Received</option>
+              <option value="complete">Complete</option>
+            </select>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={form.messageSent}
+              onChange={(e) => setForm({ ...form, messageSent: e.target.checked })}
+            />
+            Message sent
+          </label>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">Message date</label>
+            <input
+              type="date"
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={form.messageDate || ""}
+              onChange={(e) => setForm({ ...form, messageDate: e.target.value })}
+              disabled={!form.messageSent}
+            />
+          </div>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">Note</label>
+          <textarea
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            rows={3}
+            value={form.note}
+            onChange={(e) => setForm({ ...form, note: e.target.value })}
+          />
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <button className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600" onClick={onSave}>
+            Save
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function CmModal({
+  open,
+  onClose,
+  onSave,
+  form,
+  setForm,
+  clients,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSave: () => void;
+  form: { clientId: string; platform: string; issue: string; messageSent: boolean; messageDate: string | null; resolved: boolean };
+  setForm: (f: { clientId: string; platform: string; issue: string; messageSent: boolean; messageDate: string | null; resolved: boolean }) => void;
+  clients: FullClient[];
+}) {
+  return (
+    <Modal title="Credit Monitoring" open={open} onClose={onClose}>
+      <div className="space-y-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">Client</label>
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={form.clientId}
+            onChange={(e) => setForm({ ...form, clientId: e.target.value })}
+          >
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">Platform</label>
+            <input
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={form.platform}
+              onChange={(e) => setForm({ ...form, platform: e.target.value })}
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">Issue</label>
+            <input
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={form.issue}
+              onChange={(e) => setForm({ ...form, issue: e.target.value })}
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={form.messageSent}
+              onChange={(e) => setForm({ ...form, messageSent: e.target.checked })}
+            />
+            Message sent
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={form.resolved}
+              onChange={(e) => setForm({ ...form, resolved: e.target.checked })}
+            />
+            Resolved
+          </label>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">Message date</label>
+          <input
+            type="date"
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={form.messageDate || ""}
+            onChange={(e) => setForm({ ...form, messageDate: e.target.value })}
+            disabled={!form.messageSent}
+          />
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <button className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600" onClick={onSave}>
             Save
           </button>
         </div>
