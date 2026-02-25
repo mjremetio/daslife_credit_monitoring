@@ -1,4 +1,5 @@
 import { FullClient, ClientProfile, IssueRecord, DocRecord, CreditMonitoringRecord } from "@/types/models";
+import { User } from "@/types/models";
 
 export const fetchClients = async (): Promise<FullClient[]> => {
   const res = await fetch("/api/clients", { cache: "no-store" });
@@ -98,5 +99,42 @@ export const deleteClient = async (clientId: string) => {
     body: JSON.stringify({ action: "deleteClient", clientId }),
   });
   if (!res.ok) throw new Error("Could not delete client");
+  return res.json();
+};
+
+export const fetchUsers = async (): Promise<User[]> => {
+  const res = await fetch("/api/users", { cache: "no-store" });
+  if (!res.ok) throw new Error("Failed to fetch users");
+  const payload = await res.json();
+  return payload.data as User[];
+};
+
+export const addUser = async (user: Partial<User> & { name: string }) => {
+  const res = await fetch("/api/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(user),
+  });
+  if (!res.ok) throw new Error("Could not add user");
+  return res.json();
+};
+
+export const updateUser = async (user: User) => {
+  const res = await fetch("/api/users", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(user),
+  });
+  if (!res.ok) throw new Error("Could not update user");
+  return res.json();
+};
+
+export const deleteUser = async (id: string) => {
+  const res = await fetch("/api/users", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  if (!res.ok) throw new Error("Could not delete user");
   return res.json();
 };

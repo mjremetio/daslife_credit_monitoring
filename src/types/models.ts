@@ -53,3 +53,11 @@ export type FullClient = ClientProfile & {
   docs: DocRecord[];
   cmIssues: CreditMonitoringRecord[];
 };
+
+export type User = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  status: "Active" | "Inactive";
+};

@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import sampleData from "@/data/clients.sample.json";
-import { ClientProfile, IssueRecord, DocRecord, CreditMonitoringRecord } from "../types/models";
+import { ClientProfile, IssueRecord, DocRecord, CreditMonitoringRecord, User } from "../types/models";
 import { ensureSchema, replaceAllData } from "./db";
 import crypto from "crypto";
 
@@ -41,7 +41,11 @@ export function seedIfEmpty() {
   const issues: IssueRecord[] = [];
   const docs: DocRecord[] = [];
   const cmIssues: CreditMonitoringRecord[] = [];
+  const users: User[] = [
+    { id: crypto.randomUUID(), name: "Ana Disputer", email: "ana@example.com", role: "Disputer", status: "Active" },
+    { id: crypto.randomUUID(), name: "Ben Disputer", email: "ben@example.com", role: "Disputer", status: "Active" },
+  ];
 
-  replaceAllData({ clients, issues, docs, cmIssues });
+  replaceAllData({ clients, issues, docs, cmIssues, users });
   console.log(`Seeded ${clients.length} clients into sqlite at ${dbPath}`);
 }

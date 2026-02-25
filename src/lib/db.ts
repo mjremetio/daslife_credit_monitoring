@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
-import { ClientProfile, IssueRecord, CreditMonitoringRecord, DocRecord, DocCategory, DocStatus } from "../types/models";
+import { ClientProfile, IssueRecord, CreditMonitoringRecord, DocRecord, DocCategory, DocStatus, User } from "../types/models";
 
 // Use writable location for serverless (Vercel) – /tmp by default
 const dataDir = process.env.SQLITE_DIR || path.join("/tmp", "daslife_data");
@@ -31,6 +31,7 @@ type ClientRow = {
 type IssueRow = { id: string; client_id: string; issue_type: string; message_sent: number; message_date: string | null; resolved: number; note: string | null };
 type CmRow = { id: string; client_id: string; platform: string; issue: string; message_sent: number; message_date: string | null; resolved: number };
 type DocRow = { id: string; client_id: string; doc_type: string; status: string; message_sent: number; message_date: string | null; note: string | null; category: string | null };
+type UserRow = { id: string; name: string; email: string; role: string; status: string };
 
 export function ensureSchema() {
   db.exec(`
@@ -78,6 +79,14 @@ export function ensureSchema() {
       note TEXT,
       category TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT,
+      role TEXT,
+      status TEXT DEFAULT 'Active'
+    );
   `);
 }
 
@@ -120,14 +129,17 @@ export function replaceAllData(opts: {
   issues: IssueRecord[];
   cmIssues: CreditMonitoringRecord[];
   docs: DocRecord[];
+  users?: User[];
 }) {
-  const { clients, issues, cmIssues, docs } = opts;
+  const { clients, issues, cmIssues, docs, users } = opts;
+  const userList = users ?? fetchUsers();
   const truncate = db.transaction(() => {
-    db.exec("DELETE FROM issues; DELETE FROM cm_issues; DELETE FROM docs; DELETE FROM clients;");
+    db.exec("DELETE FROM issues; DELETE FROM cm_issues; DELETE FROM docs; DELETE FROM clients; DELETE FROM users;");
     upsertClients(clients);
     batchInsertIssues(issues);
     batchInsertCm(cmIssues);
     batchInsertDocs(docs);
+    batchInsertUsers(userList);
   });
   truncate();
 }
@@ -171,6 +183,28 @@ export function batchInsertDocs(rows: DocRecord[]) {
     messageSent: r.messageSent ? 1 : 0,
   })));
   trx(rows);
+}
+
+const insertUser = db.prepare(`
+  INSERT OR REPLACE INTO users (id, name, email, role, status)
+  VALUES (@id, @name, @email, @role, @status)
+`);
+
+export function batchInsertUsers(rows: User[]) {
+  const trx = db.transaction((items: User[]) => items.forEach((u) => insertUser.run(u)));
+  trx(rows);
+}
+
+export function addUser(user: User) {
+  insertUser.run(user);
+}
+
+export function updateUser(user: User) {
+  insertUser.run(user);
+}
+
+export function deleteUser(userId: string) {
+  db.prepare("DELETE FROM users WHERE id = ?").run(userId);
 }
 
 export function fetchFullClients() {
@@ -225,7 +259,7 @@ export function fetchFullClients() {
     return acc;
   }, {});
 
-  return clientRows.map((c) => ({
+  const enriched = clientRows.map((c) => ({
     id: c.id,
     name: c.name,
     onboardDate: c.onboard_date,
@@ -241,6 +275,8 @@ export function fetchFullClients() {
     cmIssues: cmByClient[c.id] || [],
     docs: docsByClient[c.id] || [],
   }));
+
+  return enriched;
 }
 
 export function markProcessed(clientId: string, todayIso: string) {
@@ -281,4 +317,9 @@ export function addCmIssue(row: CreditMonitoringRecord) {
     messageSent: row.messageSent ? 1 : 0,
     resolved: row.resolved ? 1 : 0,
   });
+}
+
+export function fetchUsers(): User[] {
+  const rows = db.prepare("SELECT * FROM users").all() as UserRow[];
+  return rows.map((r) => ({ id: r.id, name: r.name, email: r.email || "", role: r.role || "Disputer", status: (r.status || "Active") as User["status"] }));
 }

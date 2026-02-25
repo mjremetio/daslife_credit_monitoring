@@ -1,9 +1,12 @@
-import { Dashboard } from "@/components/Dashboard";
-import { fetchFullClients } from "@/lib/db";
+import { AppShell } from "@/components/AppShell";
+import { fetchFullClients, fetchUsers } from "@/lib/db";
+import { seedIfEmpty } from "@/lib/seed";
 
 export const revalidate = 0;
 
 export default async function Home() {
-  const data = fetchFullClients();
-  return <Dashboard initialData={data} />;
+  seedIfEmpty();
+  const clients = fetchFullClients();
+  const users = fetchUsers();
+  return <AppShell initialClients={clients} initialUsers={users} />;
 }

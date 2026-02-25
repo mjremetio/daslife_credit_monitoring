@@ -21,9 +21,26 @@ import {
 } from "lucide-react";
 import { ClientsTable } from "./ClientsTable";
 import { MetricCard } from "./MetricCard";
-import { fetchClients, markProcessed, toggleIssueResolved, addIssue, addClient, deleteClient, addDoc, addCmIssue } from "@/lib/api-client";
-import { FullClient, DocRecord, CreditMonitoringRecord, ClientProfile } from "@/types/models";
+import {
+  fetchClients,
+  markProcessed,
+  toggleIssueResolved,
+  addIssue,
+  addClient,
+  updateClient,
+  deleteClient,
+  addDoc,
+  addCmIssue,
+} from "@/lib/api-client";
+import { FullClient, DocRecord, CreditMonitoringRecord, ClientProfile, User } from "@/types/models";
 import { exportCsv, exportXls } from "@/lib/exporters";
+import { Modal } from "./Modal";
+import {
+  fetchUsers,
+  addUser as addUserApi,
+  updateUser as updateUserApi,
+  deleteUser as deleteUserApi,
+} from "@/lib/api-client";
 
 const today = new Date();
 
@@ -33,26 +50,38 @@ const isOverdue = (c: FullClient) => c.nextDueDate && parseISO(c.nextDueDate) < 
 const dueWithin = (c: FullClient, days: number) =>
   c.nextDueDate && isWithinInterval(parseISO(c.nextDueDate), { start: today, end: addDays(today, days) });
 
-export function Dashboard({ initialData }: { initialData: FullClient[] }) {
-  const [clients, setClients] = useState<FullClient[]>(initialData);
+export function Dashboard({ initialClients, initialUsers }: { initialClients: FullClient[]; initialUsers: User[] }) {
+  const [clients, setClients] = useState<FullClient[]>(initialClients);
+  const [users, setUsers] = useState<User[]>(initialUsers);
   const [search, setSearch] = useState("");
   const [disputerFilter, setDisputerFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [activeTab, setActiveTab] = useState<"overview" | "clients" | "ready" | "issues" | "docs" | "cm" | "users">("overview");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<FullClient | null>(null);
   const [clientForm, setClientForm] = useState<{ name: string; disputer: string; status: ClientProfile["status"]; round: number }>({
     name: "",
     disputer: "",
     status: "Active",
     round: 1,
   });
+  const [userModalOpen, setUserModalOpen] = useState(false);
+  const [userEditing, setUserEditing] = useState<User | null>(null);
+  const [userForm, setUserForm] = useState<{ name: string; email: string; role: string; status: User["status"] }>({
+    name: "",
+    email: "",
+    role: "Disputer",
+    status: "Active",
+  });
 
   const refresh = async () => {
     setBusy(true);
     try {
-      const data = await fetchClients();
+      const [data, userList] = await Promise.all([fetchClients(), fetchUsers()]);
       setClients(data);
+      setUsers(userList);
     } catch (error) {
       setMessage(String(error));
     } finally {
@@ -112,7 +141,11 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
     clients.flatMap((c) => c.cmIssues.map((cm) => ({ client: c, cm }))),
   [clients]);
 
-  const disputers = Array.from(new Set(clients.map((c) => c.disputer).filter(Boolean)));
+  const disputers = useMemo(() => {
+    const byUsers = users.map((u) => u.name).filter(Boolean);
+    const byClients = clients.map((c) => c.disputer).filter(Boolean);
+    return Array.from(new Set([...byUsers, ...byClients]));
+  }, [users, clients]);
 
   const handleProcessed = async (id: string) => {
     setBusy(true);
@@ -135,17 +168,27 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
     setBusy(false);
   };
 
-  const handleAddClient = async () => {
+  const handleSaveClient = async () => {
     if (!clientForm.name.trim()) return;
     setBusy(true);
-    await addClient({
-      name: clientForm.name.trim(),
-      disputer: clientForm.disputer,
-      status: clientForm.status,
-      round: clientForm.round,
-      dateProcessed: new Date().toISOString().slice(0, 10),
-    });
+    if (editing) {
+      await updateClient({
+        ...editing,
+        ...clientForm,
+        dateProcessed: editing.dateProcessed || new Date().toISOString().slice(0, 10),
+      });
+    } else {
+      await addClient({
+        name: clientForm.name.trim(),
+        disputer: clientForm.disputer,
+        status: clientForm.status,
+        round: clientForm.round,
+        dateProcessed: new Date().toISOString().slice(0, 10),
+      });
+    }
     setClientForm({ name: "", disputer: "", status: "Active", round: 1 });
+    setEditing(null);
+    setModalOpen(false);
     await refresh();
     setBusy(false);
   };
@@ -167,6 +210,28 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
   const handleAddCm = async (payload: { clientId: string; platform: string; issue: string }) => {
     setBusy(true);
     await addCmIssue({ ...payload, messageSent: false, resolved: false });
+    await refresh();
+    setBusy(false);
+  };
+
+  const handleSaveUser = async () => {
+    if (!userForm.name.trim()) return;
+    setBusy(true);
+    if (userEditing) {
+      await updateUserApi({ ...userEditing, ...userForm });
+    } else {
+      await addUserApi({ ...userForm, name: userForm.name.trim() });
+    }
+    setUserForm({ name: "", email: "", role: "Disputer", status: "Active" });
+    setUserEditing(null);
+    setUserModalOpen(false);
+    await refresh();
+    setBusy(false);
+  };
+
+  const handleDeleteUser = async (id: string) => {
+    setBusy(true);
+    await deleteUserApi(id);
     await refresh();
     setBusy(false);
   };
@@ -391,10 +456,26 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
       {activeTab === "cm" && <CreditMonitoringSection cmIssues={cmIssues} clients={clients} onAdd={handleAddCm} />}
 
       {/* Users / Disputers */}
-      {activeTab === "users" && <UsersSection clients={clients} />}
+      {activeTab === "users" && (
+        <UsersSection
+          clients={clients}
+          users={users}
+          onAdd={() => {
+            setUserEditing(null);
+            setUserForm({ name: "", email: "", role: "Disputer", status: "Active" });
+            setUserModalOpen(true);
+          }}
+          onEdit={(user) => {
+            setUserEditing(user);
+            setUserForm({ name: user.name, email: user.email, role: user.role, status: user.status });
+            setUserModalOpen(true);
+          }}
+          onDelete={handleDeleteUser}
+        />
+      )}
 
       {/* Client Management */}
-      {activeTab === "clients" && (
+          {activeTab === "clients" && (
         <section className="space-y-4">
           <div className="rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-md">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -434,46 +515,17 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
                 </select>
               </div>
             </div>
-            <div className="mt-3 grid gap-3 md:grid-cols-4">
-              <input
-                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                placeholder="Client name"
-                value={clientForm.name}
-                onChange={(e) => setClientForm({ ...clientForm, name: e.target.value })}
-              />
-              <input
-                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                placeholder="Disputer"
-                value={clientForm.disputer}
-                onChange={(e) => setClientForm({ ...clientForm, disputer: e.target.value })}
-              />
-              <select
-                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                value={clientForm.status}
-                onChange={(e) => setClientForm({ ...clientForm, status: e.target.value as ClientProfile["status"] })}
+            <div className="mt-3 flex justify-end">
+              <button
+                className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600"
+                onClick={() => {
+                  setEditing(null);
+                  setClientForm({ name: "", disputer: "", status: "Active", round: 1 });
+                  setModalOpen(true);
+                }}
               >
-                {(["Active", "On Hold", "Completed", "Dropped"] as const).map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-              <div className="flex gap-2">
-                <input
-                  type="number"
-                  min={1}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                  value={clientForm.round}
-                  onChange={(e) => setClientForm({ ...clientForm, round: Number(e.target.value) || 1 })}
-                />
-                <button
-                  className="rounded-xl bg-emerald-500 px-3 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600 disabled:opacity-50"
-                  onClick={handleAddClient}
-                  disabled={busy}
-                >
-                  Add
-                </button>
-              </div>
+                + Add Client
+              </button>
             </div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -481,10 +533,44 @@ export function Dashboard({ initialData }: { initialData: FullClient[] }) {
               <h2 className="text-lg font-semibold text-slate-900">Client Master List</h2>
               <span className="text-xs text-slate-500">Search & filter above, sort columns in table.</span>
             </div>
-            <ClientsTable data={filtered} onDelete={handleDeleteClient} />
+            <ClientsTable
+              data={filtered}
+              onDelete={handleDeleteClient}
+              onEdit={(client) => {
+                setEditing(client);
+                setClientForm({
+                  name: client.name,
+                  disputer: client.disputer,
+                  status: client.status,
+                  round: client.round,
+                });
+                setModalOpen(true);
+              }}
+            />
           </div>
         </section>
       )}
+      <ClientModal
+        open={modalOpen}
+        onClose={() => {
+          setModalOpen(false);
+          setEditing(null);
+        }}
+        onSave={handleSaveClient}
+        form={clientForm}
+        setForm={setClientForm}
+        disputers={disputers}
+      />
+      <UserModal
+        open={userModalOpen}
+        onClose={() => {
+          setUserModalOpen(false);
+          setUserEditing(null);
+        }}
+        onSave={handleSaveUser}
+        form={userForm}
+        setForm={setUserForm}
+      />
       </div>
     </div>
   );
@@ -696,12 +782,21 @@ function CreditMonitoringSection({
   );
 }
 
-function UsersSection({ clients }: { clients: FullClient[] }) {
+function UsersSection({
+  users,
+  clients,
+  onAdd,
+  onEdit,
+  onDelete,
+}: {
+  users: User[];
+  clients: FullClient[];
+  onAdd: () => void;
+  onEdit: (u: User) => void;
+  onDelete: (id: string) => void;
+}) {
   const stats = useMemo(() => {
-    const map = new Map<
-      string,
-      { total: number; overdue: number; issues: number; docsPending: number }
-    >();
+    const map = new Map<string, { total: number; overdue: number; issues: number; docsPending: number }>();
     clients.forEach((c) => {
       const key = c.disputer || "Unassigned";
       const entry = map.get(key) || { total: 0, overdue: 0, issues: 0, docsPending: 0 };
@@ -711,40 +806,78 @@ function UsersSection({ clients }: { clients: FullClient[] }) {
       if (c.nextDueDate && parseISO(c.nextDueDate) < new Date()) entry.overdue += 1;
       map.set(key, entry);
     });
-    return Array.from(map.entries()).map(([disputer, data]) => ({ disputer, ...data }));
+    return map;
   }, [clients]);
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-slate-900">Users (Disputers)</h2>
-        <span className="text-xs text-slate-500">Derived from client assignments</span>
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Users (Disputers)</h2>
+          <p className="text-xs text-slate-500">Manage disputer list; client dropdown pulls from here.</p>
+        </div>
+        <button
+          className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800"
+          onClick={onAdd}
+        >
+          + Add User
+        </button>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
             <tr>
-              <th className="px-3 py-2 text-left">Disputer</th>
+              <th className="px-3 py-2 text-left">Name</th>
+              <th className="px-3 py-2 text-left">Email</th>
+              <th className="px-3 py-2 text-left">Role</th>
+              <th className="px-3 py-2 text-left">Status</th>
               <th className="px-3 py-2 text-left">Clients</th>
-              <th className="px-3 py-2 text-left">Overdue</th>
-              <th className="px-3 py-2 text-left">Open Issues</th>
-              <th className="px-3 py-2 text-left">Docs Pending</th>
+              <th className="px-3 py-2 text-left">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {stats.map((row) => (
-              <tr key={row.disputer}>
-                <td className="px-3 py-2 font-semibold text-slate-900">{row.disputer}</td>
-                <td className="px-3 py-2 text-slate-700">{row.total}</td>
-                <td className="px-3 py-2 text-slate-700">{row.overdue}</td>
-                <td className="px-3 py-2 text-slate-700">{row.issues}</td>
-                <td className="px-3 py-2 text-slate-700">{row.docsPending}</td>
-              </tr>
-            ))}
-            {stats.length === 0 && (
+            {users.map((u) => {
+              const stat = stats.get(u.name) || { total: 0, overdue: 0, issues: 0, docsPending: 0 };
+              return (
+                <tr key={u.id}>
+                  <td className="px-3 py-2 font-semibold text-slate-900">{u.name}</td>
+                  <td className="px-3 py-2 text-slate-700">{u.email || "—"}</td>
+                  <td className="px-3 py-2 text-slate-700">{u.role}</td>
+                  <td className="px-3 py-2">
+                    <span
+                      className={`rounded-full px-2 py-1 text-xs font-semibold ${
+                        u.status === "Active" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      {u.status}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-slate-700">
+                    {stat.total} total · {stat.overdue} overdue · {stat.issues} issues · {stat.docsPending} docs
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex gap-2">
+                      <button
+                        className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white"
+                        onClick={() => onEdit(u)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="rounded-full bg-rose-500 px-3 py-1 text-xs font-semibold text-white"
+                        onClick={() => onDelete(u.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {users.length === 0 && (
               <tr>
-                <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={5}>
-                  No disputers found.
+                <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={6}>
+                  No users yet. Add at least one disputer.
                 </td>
               </tr>
             )}
@@ -752,5 +885,164 @@ function UsersSection({ clients }: { clients: FullClient[] }) {
         </table>
       </div>
     </div>
+  );
+}
+
+function ClientModal({
+  open,
+  onClose,
+  onSave,
+  form,
+  setForm,
+  disputers,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSave: () => void;
+  form: { name: string; disputer: string; status: ClientProfile["status"]; round: number };
+  setForm: (f: { name: string; disputer: string; status: ClientProfile["status"]; round: number }) => void;
+  disputers: string[];
+}) {
+  return (
+    <Modal title="Client" open={open} onClose={onClose}>
+      <div className="space-y-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">Name</label>
+          <input
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">Disputer</label>
+          <input
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            list="disputer-list"
+            value={form.disputer}
+            onChange={(e) => setForm({ ...form, disputer: e.target.value })}
+            placeholder="Select or type"
+          />
+          <datalist id="disputer-list">
+            {disputers.map((d) => (
+              <option key={d} value={d} />
+            ))}
+          </datalist>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">Status</label>
+            <select
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={form.status}
+              onChange={(e) => setForm({ ...form, status: e.target.value as ClientProfile["status"] })}
+            >
+              {(["Active", "On Hold", "Completed", "Dropped"] as const).map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">Round</label>
+            <input
+              type="number"
+              min={1}
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={form.round}
+              onChange={(e) => setForm({ ...form, round: Number(e.target.value) || 1 })}
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <button
+            className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600"
+            onClick={onSave}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function UserModal({
+  open,
+  onClose,
+  onSave,
+  form,
+  setForm,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSave: () => void;
+  form: { name: string; email: string; role: string; status: User["status"] };
+  setForm: (f: { name: string; email: string; role: string; status: User["status"] }) => void;
+}) {
+  return (
+    <Modal title="User" open={open} onClose={onClose}>
+      <div className="space-y-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">Name</label>
+          <input
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">Email</label>
+          <input
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={form.email}
+            onChange={(e) => setForm({ ...form, email: e.target.value })}
+            placeholder="optional"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">Role</label>
+            <input
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={form.role}
+              onChange={(e) => setForm({ ...form, role: e.target.value })}
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">Status</label>
+            <select
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={form.status}
+              onChange={(e) => setForm({ ...form, status: e.target.value as User["status"] })}
+            >
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </select>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <button
+            className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600"
+            onClick={onSave}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }

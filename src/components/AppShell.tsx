@@ -2,19 +2,19 @@
 
 import { AuthProvider, useAuth } from "./AuthProvider";
 import { Dashboard } from "./Dashboard";
-import { FullClient } from "@/types/models";
+import { FullClient, User } from "@/types/models";
 import { useState } from "react";
 import { LogOut, UserCircle } from "lucide-react";
 
-export function AppShell({ initialData }: { initialData: FullClient[] }) {
+export function AppShell({ initialClients, initialUsers }: { initialClients: FullClient[]; initialUsers: User[] }) {
   return (
     <AuthProvider>
-      <Authed initialData={initialData} />
+      <Authed initialClients={initialClients} initialUsers={initialUsers} />
     </AuthProvider>
   );
 }
 
-function Authed({ initialData }: { initialData: FullClient[] }) {
+function Authed({ initialClients, initialUsers }: { initialClients: FullClient[]; initialUsers: User[] }) {
   const { user, login, logout } = useAuth();
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("password");
@@ -86,7 +86,7 @@ function Authed({ initialData }: { initialData: FullClient[] }) {
           </button>
         </div>
       </header>
-      <Dashboard initialData={initialData} />
+      <Dashboard initialClients={initialClients} initialUsers={initialUsers} />
     </div>
   );
 }
