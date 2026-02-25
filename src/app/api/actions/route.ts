@@ -135,6 +135,14 @@ export async function POST(req: Request) {
   }
 
   if (action === "addClient") {
+    const today = body.dateProcessed || new Date().toISOString().slice(0, 10);
+    const nextDue = body.nextDueDate
+      ? body.nextDueDate
+      : (() => {
+          const dt = new Date(today);
+          dt.setDate(dt.getDate() + 30);
+          return dt.toISOString().slice(0, 10);
+        })();
     const client: ClientProfile = {
       id: crypto.randomUUID(),
       name: body.name || "Unnamed",
@@ -142,8 +150,8 @@ export async function POST(req: Request) {
       disputer: body.disputer || "",
       status: body.status || "Active",
       round: Number(body.round || 1),
-      dateProcessed: body.dateProcessed || null,
-      nextDueDate: body.nextDueDate || null,
+      dateProcessed: today,
+      nextDueDate: nextDue,
       notes: body.notes || "",
       flags: body.flags || "",
       isNew: true,

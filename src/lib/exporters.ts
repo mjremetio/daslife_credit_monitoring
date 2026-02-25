@@ -43,3 +43,18 @@ export const exportXls = (records: FullClient[], filename = "clients.xlsx") => {
   const blob = new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   downloadBlob(blob, filename);
 };
+
+export const exportRowsCsv = (rows: Record<string, unknown>[], filename = "data.csv") => {
+  const csv = Papa.unparse(rows);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  downloadBlob(blob, filename);
+};
+
+export const exportRowsXls = (rows: Record<string, unknown>[], filename = "data.xlsx", sheetName = "Data") => {
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+  const wbout = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+  const blob = new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  downloadBlob(blob, filename);
+};

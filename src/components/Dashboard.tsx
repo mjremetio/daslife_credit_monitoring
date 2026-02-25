@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Dispatch, SetStateAction, useEffect, useMemo, useState } from "react";
 import { addDays, isWithinInterval, parseISO } from "date-fns";
 import {
   CalendarDays,
@@ -37,7 +37,7 @@ import {
   deleteCmIssue,
 } from "@/lib/api-client";
 import { FullClient, DocRecord, CreditMonitoringRecord, ClientProfile, User, IssueRecord } from "@/types/models";
-import { exportCsv, exportXls } from "@/lib/exporters";
+import { exportCsv, exportXls, exportRowsCsv, exportRowsXls } from "@/lib/exporters";
 import { Modal } from "./Modal";
 import {
   fetchUsers,
@@ -110,6 +110,24 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
     messageDate: null,
     resolved: false,
   });
+  const [issueSearch, setIssueSearch] = useState("");
+  const [issueFilter, setIssueFilter] = useState<"all" | "open" | "resolved">("all");
+  const [issuePage, setIssuePage] = useState(0);
+  const [issuePageSize, setIssuePageSize] = useState(10);
+
+  const [cmSearch, setCmSearch] = useState("");
+  const [cmResolvedFilter, setCmResolvedFilter] = useState<"all" | "open" | "resolved">("all");
+  const [cmPage, setCmPage] = useState(0);
+  const [cmPageSize, setCmPageSize] = useState(10);
+
+  const [userSearch, setUserSearch] = useState("");
+  const [userStatusFilter, setUserStatusFilter] = useState<"all" | User["status"]>("all");
+  const [userPage, setUserPage] = useState(0);
+  const [userPageSize, setUserPageSize] = useState(10);
+
+  const [readySearch, setReadySearch] = useState("");
+  const [readyPage, setReadyPage] = useState(0);
+  const [readyPageSize, setReadyPageSize] = useState(10);
 
   const refresh = async () => {
     setBusy(true);
@@ -172,17 +190,74 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
     [clients],
   );
 
-  const issues = useMemo(() =>
-    clients.flatMap((c) => c.issues.map((i) => ({ client: c, issue: i }))),
-  [clients]);
+  const issues = useMemo(
+    () => clients.flatMap((c) => c.issues.map((i) => ({ client: c, issue: i }))),
+    [clients],
+  );
 
-  const docs = useMemo(() =>
-    clients.flatMap((c) => c.docs.map((d) => ({ client: c, doc: d }))),
-  [clients]);
+  const docs = useMemo(
+    () => clients.flatMap((c) => c.docs.map((d) => ({ client: c, doc: d }))),
+    [clients],
+  );
 
-  const cmIssues = useMemo(() =>
-    clients.flatMap((c) => c.cmIssues.map((cm) => ({ client: c, cm }))),
-  [clients]);
+  const cmIssues = useMemo(
+    () => clients.flatMap((c) => c.cmIssues.map((cm) => ({ client: c, cm }))),
+    [clients],
+  );
+
+  const filteredIssues = useMemo(() => {
+    const searchTerm = issueSearch.toLowerCase();
+    return issues
+      .filter(({ client, issue }) => {
+        const matchesSearch =
+          client.name.toLowerCase().includes(searchTerm) ||
+          (issue.issueType || "").toLowerCase().includes(searchTerm) ||
+          (issue.note || "").toLowerCase().includes(searchTerm);
+        const matchesResolved =
+          issueFilter === "all" ? true : issueFilter === "resolved" ? issue.resolved : !issue.resolved;
+        return matchesSearch && matchesResolved;
+      })
+      .sort((a, b) => (a.client.name || "").localeCompare(b.client.name || ""));
+  }, [issues, issueSearch, issueFilter]);
+
+  const filteredCm = useMemo(() => {
+    const term = cmSearch.toLowerCase();
+    return cmIssues
+      .filter(({ client, cm }) => {
+        const matchesSearch =
+          client.name.toLowerCase().includes(term) ||
+          (cm.platform || "").toLowerCase().includes(term) ||
+          (cm.issue || "").toLowerCase().includes(term);
+        const matchesResolved = cmResolvedFilter === "all" ? true : cmResolvedFilter === "resolved" ? cm.resolved : !cm.resolved;
+        return matchesSearch && matchesResolved;
+      })
+      .sort((a, b) => (a.client.name || "").localeCompare(b.client.name || ""));
+  }, [cmIssues, cmSearch, cmResolvedFilter]);
+
+  const filteredUsers = useMemo(() => {
+    const term = userSearch.toLowerCase();
+    return users
+      .filter((u) => {
+        const matchesSearch = u.name.toLowerCase().includes(term) || (u.email || "").toLowerCase().includes(term);
+        const matchesStatus = userStatusFilter === "all" ? true : u.status === userStatusFilter;
+        return matchesSearch && matchesStatus;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [users, userSearch, userStatusFilter]);
+
+  const filteredReady = useMemo(() => {
+    const term = readySearch.toLowerCase();
+    return readyQueue.filter(
+      (c) =>
+        c.name.toLowerCase().includes(term) ||
+        (c.disputer || "").toLowerCase().includes(term),
+    );
+  }, [readyQueue, readySearch]);
+
+  const paginate = <T,>(rows: T[], page: number, size: number) => {
+    const start = page * size;
+    return rows.slice(start, start + size);
+  };
 
   const disputers = useMemo(() => {
     const byUsers = users.map((u) => u.name).filter(Boolean);
@@ -461,9 +536,57 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
       {/* Ready Queue */}
       {activeTab === "ready" && (
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-slate-900">Ready to Process Queue</h2>
-            <span className="text-sm text-slate-500">Click “Mark Processed” to advance round & due date</span>
+          <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Ready to Process Queue</h2>
+              <span className="text-sm text-slate-500">Click “Mark Processed” to advance round & due date</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <input
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                placeholder="Search ready..."
+                value={readySearch}
+                onChange={(e) => {
+                  setReadySearch(e.target.value);
+                  setReadyPage(0);
+                }}
+              />
+              <button
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                onClick={() =>
+                  exportRowsCsv(
+                    filteredReady.map((c) => ({
+                      client: c.name,
+                      disputer: c.disputer,
+                      due: c.nextDueDate,
+                      round: c.round,
+                      isNew: c.isNew,
+                    })),
+                    "ready-queue.csv",
+                  )
+                }
+              >
+                Export CSV
+              </button>
+              <button
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                onClick={() =>
+                  exportRowsXls(
+                    filteredReady.map((c) => ({
+                      client: c.name,
+                      disputer: c.disputer,
+                      due: c.nextDueDate,
+                      round: c.round,
+                      isNew: c.isNew,
+                    })),
+                    "ready-queue.xlsx",
+                    "Ready",
+                  )
+                }
+              >
+                Export XLS
+              </button>
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-slate-200">
@@ -478,7 +601,7 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {readyQueue.map((c) => (
+                {paginate(filteredReady, readyPage, readyPageSize).map((c) => (
                   <tr key={c.id} className="hover:bg-slate-50">
                     <td className="px-3 py-2 text-sm font-semibold text-slate-900">{c.name}</td>
                     <td className="px-3 py-2 text-sm text-slate-700">{c.isNew ? "NEW" : "OLD"}</td>
@@ -496,7 +619,7 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
                     </td>
                   </tr>
                 ))}
-                {readyQueue.length === 0 && (
+                {filteredReady.length === 0 && (
                   <tr>
                     <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={6}>
                       No clients in queue.
@@ -506,34 +629,133 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
               </tbody>
             </table>
           </div>
+          <div className="flex items-center justify-between text-sm text-slate-600 mt-3">
+            <div>
+              Page {readyPage + 1} of {Math.max(1, Math.ceil(filteredReady.length / readyPageSize))}
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                value={readyPageSize}
+                onChange={(e) => {
+                  setReadyPageSize(Number(e.target.value));
+                  setReadyPage(0);
+                }}
+              >
+                {[10, 20, 50].map((size) => (
+                  <option key={size} value={size}>
+                    {size} / page
+                  </option>
+                ))}
+              </select>
+              <div className="flex items-center gap-1">
+                <button
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50"
+                  onClick={() => setReadyPage((p) => Math.max(0, p - 1))}
+                  disabled={readyPage === 0}
+                >
+                  Prev
+                </button>
+                <button
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50"
+                  onClick={() =>
+                    setReadyPage((p) => (p + 1 < Math.ceil(filteredReady.length / readyPageSize) ? p + 1 : p))
+                  }
+                  disabled={readyPage + 1 >= Math.ceil(filteredReady.length / readyPageSize)}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </div>
         </section>
       )}
 
       {/* Issues */}
       {activeTab === "issues" && (
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-slate-900">Dues with Issues</h2>
               <p className="text-xs text-slate-500">Edit, resolve, or delete issues per client.</p>
             </div>
-            <button
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800"
-              onClick={() => {
-                setEditingIssue(null);
-                setIssueForm({
-                  clientId: clients[0]?.id ?? "",
-                  issueType: "Proof of Address",
-                  note: "",
-                  messageSent: false,
-                  messageDate: null,
-                  resolved: false,
-                });
-                setIssueModalOpen(true);
-              }}
-            >
-              + Add Issue
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <input
+                value={issueSearch}
+                onChange={(e) => {
+                  setIssueSearch(e.target.value);
+                  setIssuePage(0);
+                }}
+                placeholder="Search issues..."
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              />
+              <select
+                value={issueFilter}
+                onChange={(e) => {
+                  setIssueFilter(e.target.value as typeof issueFilter);
+                  setIssuePage(0);
+                }}
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              >
+                <option value="all">All</option>
+                <option value="open">Open</option>
+                <option value="resolved">Resolved</option>
+              </select>
+              <button
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                onClick={() =>
+                  exportRowsCsv(
+                    filteredIssues.map(({ client, issue }) => ({
+                      client: client.name,
+                      issue: issue.issueType,
+                      note: issue.note,
+                      messageSent: issue.messageSent,
+                      messageDate: issue.messageDate,
+                      resolved: issue.resolved,
+                    })),
+                    "issues.csv",
+                  )
+                }
+              >
+                Export CSV
+              </button>
+              <button
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                onClick={() =>
+                  exportRowsXls(
+                    filteredIssues.map(({ client, issue }) => ({
+                      client: client.name,
+                      issue: issue.issueType,
+                      note: issue.note,
+                      messageSent: issue.messageSent,
+                      messageDate: issue.messageDate,
+                      resolved: issue.resolved,
+                    })),
+                    "issues.xlsx",
+                    "Issues",
+                  )
+                }
+              >
+                Export XLS
+              </button>
+              <button
+                className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800"
+                onClick={() => {
+                  setEditingIssue(null);
+                  setIssueForm({
+                    clientId: clients[0]?.id ?? "",
+                    issueType: "Proof of Address",
+                    note: "",
+                    messageSent: false,
+                    messageDate: null,
+                    resolved: false,
+                  });
+                  setIssueModalOpen(true);
+                }}
+              >
+                + Add Issue
+              </button>
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-slate-200 text-sm">
@@ -547,7 +769,7 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {issues.map(({ client, issue }) => (
+                {paginate(filteredIssues, issuePage, issuePageSize).map(({ client, issue }) => (
                   <tr key={issue.id}>
                     <td className="px-3 py-2 font-semibold text-slate-900">{client.name}</td>
                     <td className="px-3 py-2 text-slate-700">{issue.issueType || "(unspecified)"}</td>
@@ -599,7 +821,7 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
                     </td>
                   </tr>
                 ))}
-                {issues.length === 0 && (
+                {filteredIssues.length === 0 && (
                   <tr>
                     <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={5}>
                       No issues logged.
@@ -608,6 +830,45 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
                 )}
               </tbody>
             </table>
+          </div>
+          <div className="flex items-center justify-between text-sm text-slate-600">
+            <div>
+              Page {issuePage + 1} of {Math.max(1, Math.ceil(filteredIssues.length / issuePageSize))}
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                value={issuePageSize}
+                onChange={(e) => {
+                  setIssuePageSize(Number(e.target.value));
+                  setIssuePage(0);
+                }}
+              >
+                {[10, 20, 50].map((size) => (
+                  <option key={size} value={size}>
+                    {size} / page
+                  </option>
+                ))}
+              </select>
+              <div className="flex items-center gap-1">
+                <button
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50"
+                  onClick={() => setIssuePage((p) => Math.max(0, p - 1))}
+                  disabled={issuePage === 0}
+                >
+                  Prev
+                </button>
+                <button
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50"
+                  onClick={() =>
+                    setIssuePage((p) => (p + 1 < Math.ceil(filteredIssues.length / issuePageSize) ? p + 1 : p))
+                  }
+                  disabled={issuePage + 1 >= Math.ceil(filteredIssues.length / issuePageSize)}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -649,7 +910,7 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
       {/* Credit Monitoring */}
       {activeTab === "cm" && (
         <CreditMonitoringSection
-          cmIssues={cmIssues}
+          cmIssues={filteredCm}
           onAddClick={() => {
             setEditingCm(null);
             setCmForm({
@@ -676,6 +937,14 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
           }}
           onToggleResolved={handleToggleCmResolved}
           onDelete={handleDeleteCm}
+          search={cmSearch}
+          setSearch={setCmSearch}
+          resolvedFilter={cmResolvedFilter}
+          setResolvedFilter={setCmResolvedFilter}
+          page={cmPage}
+          setPage={setCmPage}
+          pageSize={cmPageSize}
+          setPageSize={setCmPageSize}
         />
       )}
 
@@ -683,7 +952,7 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
       {activeTab === "users" && (
         <UsersSection
           clients={clients}
-          users={users}
+          users={filteredUsers}
           onAdd={() => {
             setUserEditing(null);
             setUserForm({ name: "", email: "", role: "Disputer", status: "Active" });
@@ -695,6 +964,14 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
             setUserModalOpen(true);
           }}
           onDelete={handleDeleteUser}
+          search={userSearch}
+          setSearch={setUserSearch}
+          statusFilter={userStatusFilter}
+          setStatusFilter={setUserStatusFilter}
+          page={userPage}
+          setPage={setUserPage}
+          pageSize={userPageSize}
+          setPageSize={setUserPageSize}
         />
       )}
 
@@ -784,6 +1061,7 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
         form={clientForm}
         setForm={setClientForm}
         disputers={disputers}
+        busy={busy}
       />
       <UserModal
         open={userModalOpen}
@@ -794,6 +1072,7 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
         onSave={handleSaveUser}
         form={userForm}
         setForm={setUserForm}
+        busy={busy}
       />
       <IssueModal
         open={issueModalOpen}
@@ -805,6 +1084,7 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
         form={issueForm}
         setForm={setIssueForm}
         clients={clients}
+        busy={busy}
       />
       <DocModal
         open={docModalOpen}
@@ -816,6 +1096,7 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
         form={docForm}
         setForm={setDocForm}
         clients={clients}
+        busy={busy}
       />
       <CmModal
         open={cmModalOpen}
@@ -827,6 +1108,7 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
         form={cmForm}
         setForm={setCmForm}
         clients={clients}
+        busy={busy}
       />
       </div>
     </div>
@@ -847,80 +1129,213 @@ function DocsSection({
   onEdit: (doc: DocRecord) => void;
   onDelete: (id: string) => void;
 }) {
-  const completing = docs.filter(({ doc }) => doc.category === "completing");
-  const updating = docs.filter(({ doc }) => doc.category === "updating");
+  const [docsSearch, setDocsSearch] = useState("");
+  const [docsStatusFilter, setDocsStatusFilter] = useState<"all" | DocRecord["status"]>("all");
+  const [docsCategoryFilter, setDocsCategoryFilter] = useState<"all" | DocRecord["category"]>("all");
+  const [docsPage, setDocsPage] = useState(0);
+  const [docsPageSize, setDocsPageSize] = useState(10);
+
+  const filteredDocs = useMemo(() => {
+    const term = docsSearch.toLowerCase();
+    return docs.filter(({ client, doc }) => {
+      const matchesSearch =
+        client.name.toLowerCase().includes(term) ||
+        (doc.docType || "").toLowerCase().includes(term) ||
+        (doc.note || "").toLowerCase().includes(term);
+      const matchesStatus = docsStatusFilter === "all" ? true : doc.status === docsStatusFilter;
+      const matchesCategory = docsCategoryFilter === "all" ? true : doc.category === docsCategoryFilter;
+      return matchesSearch && matchesStatus && matchesCategory;
+    });
+  }, [docs, docsSearch, docsStatusFilter, docsCategoryFilter]);
+
+  const completing = filteredDocs.filter(({ doc }) => doc.category === "completing");
+  const updating = filteredDocs.filter(({ doc }) => doc.category === "updating");
+  const pageRows = (rows: DocWithClient[]) => rows.slice(docsPage * docsPageSize, docsPage * docsPageSize + docsPageSize);
 
   const renderTable = (rows: DocWithClient[]) => (
-    <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-slate-200 text-sm">
-        <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-          <tr>
-            <th className="px-3 py-2 text-left">Client</th>
-            <th className="px-3 py-2 text-left">Doc</th>
-            <th className="px-3 py-2 text-left">Status</th>
-            <th className="px-3 py-2 text-left">Message</th>
-            <th className="px-3 py-2 text-left">Actions</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {rows.map(({ client, doc }) => (
-            <tr key={doc.id}>
-              <td className="px-3 py-2 font-semibold text-slate-900">{client.name}</td>
-              <td className="px-3 py-2 text-slate-700">{doc.docType}</td>
-              <td className="px-3 py-2 text-slate-700 capitalize">{doc.status}</td>
-              <td className="px-3 py-2 text-slate-700">{doc.messageSent ? doc.messageDate || "sent" : "—"}</td>
-              <td className="px-3 py-2">
-                <div className="flex gap-2">
-                  <button
-                    className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white"
-                    onClick={() => onEdit(doc)}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    className="rounded-full bg-rose-500 px-3 py-1 text-xs font-semibold text-white"
-                    onClick={() => onDelete(doc.id)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))}
-          {rows.length === 0 && (
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
             <tr>
-              <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={5}>
-                No items.
-              </td>
+              <th className="px-3 py-2 text-left">Client</th>
+              <th className="px-3 py-2 text-left">Doc</th>
+              <th className="px-3 py-2 text-left">Status</th>
+              <th className="px-3 py-2 text-left">Message</th>
+              <th className="px-3 py-2 text-left">Actions</th>
             </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map(({ client, doc }) => (
+              <tr key={doc.id}>
+                <td className="px-3 py-2 font-semibold text-slate-900">{client.name}</td>
+                <td className="px-3 py-2 text-slate-700">{doc.docType}</td>
+                <td className="px-3 py-2 text-slate-700 capitalize">{doc.status}</td>
+                <td className="px-3 py-2 text-slate-700">{doc.messageSent ? doc.messageDate || "sent" : "—"}</td>
+                <td className="px-3 py-2">
+                  <div className="flex gap-2">
+                    <button
+                      className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white"
+                      onClick={() => onEdit(doc)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="rounded-full bg-rose-500 px-3 py-1 text-xs font-semibold text-white"
+                      onClick={() => onDelete(doc.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {rows.length === 0 && (
+              <tr>
+                <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={5}>
+                  No items.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
   );
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="mb-3 flex items-center justify-between">
+      <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-slate-900">Document Trackers</h2>
           <span className="text-xs text-slate-500">Completing vs Updating</span>
         </div>
-        <button
-          className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800"
-          onClick={onAddClick}
-        >
-          + Add Doc
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <input
+            placeholder="Search docs..."
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={docsSearch}
+            onChange={(e) => {
+              setDocsSearch(e.target.value);
+              setDocsPage(0);
+            }}
+          />
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={docsStatusFilter}
+            onChange={(e) => {
+              setDocsStatusFilter(e.target.value as typeof docsStatusFilter);
+              setDocsPage(0);
+            }}
+          >
+            <option value="all">Any status</option>
+            <option value="pending">Pending</option>
+            <option value="sent">Sent</option>
+            <option value="received">Received</option>
+            <option value="complete">Complete</option>
+          </select>
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={docsCategoryFilter}
+            onChange={(e) => {
+              setDocsCategoryFilter(e.target.value as typeof docsCategoryFilter);
+              setDocsPage(0);
+            }}
+          >
+            <option value="all">Any category</option>
+            <option value="completing">Completing</option>
+            <option value="updating">Updating</option>
+          </select>
+          <button
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            onClick={() =>
+              exportRowsCsv(
+                filteredDocs.map(({ client, doc }) => ({
+                  client: client.name,
+                  docType: doc.docType,
+                  status: doc.status,
+                  category: doc.category,
+                  messageSent: doc.messageSent,
+                  messageDate: doc.messageDate,
+                })),
+                "docs.csv",
+              )
+            }
+          >
+            Export CSV
+          </button>
+          <button
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            onClick={() =>
+              exportRowsXls(
+                filteredDocs.map(({ client, doc }) => ({
+                  client: client.name,
+                  docType: doc.docType,
+                  status: doc.status,
+                  category: doc.category,
+                  messageSent: doc.messageSent,
+                  messageDate: doc.messageDate,
+                })),
+                "docs.xlsx",
+                "Docs",
+              )
+            }
+          >
+            Export XLS
+          </button>
+          <button
+            className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800"
+            onClick={onAddClick}
+          >
+            + Add Doc
+          </button>
+        </div>
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         <div>
           <h3 className="mb-2 text-sm font-semibold text-slate-800">Completing Docs</h3>
-          {renderTable(completing)}
+          {renderTable(pageRows(completing))}
         </div>
         <div>
           <h3 className="mb-2 text-sm font-semibold text-slate-800">Updating Docs</h3>
-          {renderTable(updating)}
+          {renderTable(pageRows(updating))}
+        </div>
+      </div>
+      <div className="flex items-center justify-between text-sm text-slate-600 mt-3">
+        <div>
+          Page {docsPage + 1} of {Math.max(1, Math.ceil(filteredDocs.length / docsPageSize))}
+        </div>
+        <div className="flex items-center gap-2">
+          <select
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+            value={docsPageSize}
+            onChange={(e) => {
+              setDocsPageSize(Number(e.target.value));
+              setDocsPage(0);
+            }}
+          >
+            {[10, 20, 50].map((size) => (
+              <option key={size} value={size}>
+                {size} / page
+              </option>
+            ))}
+          </select>
+          <div className="flex items-center gap-1">
+            <button
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50"
+              onClick={() => setDocsPage((p) => Math.max(0, p - 1))}
+              disabled={docsPage === 0}
+            >
+              Prev
+            </button>
+            <button
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50"
+              onClick={() =>
+                setDocsPage((p) => (p + 1 < Math.ceil(filteredDocs.length / docsPageSize) ? p + 1 : p))
+              }
+              disabled={docsPage + 1 >= Math.ceil(filteredDocs.length / docsPageSize)}
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -933,26 +1348,104 @@ function CreditMonitoringSection({
   onEditClick,
   onToggleResolved,
   onDelete,
+  search,
+  setSearch,
+  resolvedFilter,
+  setResolvedFilter,
+  page,
+  setPage,
+  pageSize,
+  setPageSize,
 }: {
   cmIssues: CmWithClient[];
   onAddClick: () => void;
   onEditClick: (cm: CreditMonitoringRecord) => void;
   onToggleResolved: (id: string, resolved: boolean) => void;
   onDelete: (id: string) => void;
+  search: string;
+  setSearch: (v: string) => void;
+  resolvedFilter: "all" | "open" | "resolved";
+  setResolvedFilter: (v: "all" | "open" | "resolved") => void;
+  page: number;
+  setPage: Dispatch<SetStateAction<number>>;
+  pageSize: number;
+  setPageSize: Dispatch<SetStateAction<number>>;
 }) {
+  const pageRows = (rows: CmWithClient[]) => rows.slice(page * pageSize, page * pageSize + pageSize);
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="mb-3 flex items-center justify-between">
+      <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-slate-900">Credit Monitoring Issues</h2>
           <span className="text-xs text-slate-500">Smart Credit / MFSN / Other</span>
         </div>
-        <button
-          className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800"
-          onClick={onAddClick}
-        >
-          + Add CM Issue
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <input
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            placeholder="Search CM..."
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(0);
+            }}
+          />
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={resolvedFilter}
+            onChange={(e) => {
+              setResolvedFilter(e.target.value as typeof resolvedFilter);
+              setPage(0);
+            }}
+          >
+            <option value="all">All</option>
+            <option value="open">Open</option>
+            <option value="resolved">Resolved</option>
+          </select>
+          <button
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            onClick={() =>
+              exportRowsCsv(
+                cmIssues.map(({ client, cm }) => ({
+                  client: client.name,
+                  platform: cm.platform,
+                  issue: cm.issue,
+                  messageSent: cm.messageSent,
+                  messageDate: cm.messageDate,
+                  resolved: cm.resolved,
+                })),
+                "cm-issues.csv",
+              )
+            }
+          >
+            Export CSV
+          </button>
+          <button
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            onClick={() =>
+              exportRowsXls(
+                cmIssues.map(({ client, cm }) => ({
+                  client: client.name,
+                  platform: cm.platform,
+                  issue: cm.issue,
+                  messageSent: cm.messageSent,
+                  messageDate: cm.messageDate,
+                  resolved: cm.resolved,
+                })),
+                "cm-issues.xlsx",
+                "CM Issues",
+              )
+            }
+          >
+            Export XLS
+          </button>
+          <button
+            className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800"
+            onClick={onAddClick}
+          >
+            + Add CM Issue
+          </button>
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
@@ -967,7 +1460,7 @@ function CreditMonitoringSection({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {cmIssues.map(({ client, cm }) => (
+            {pageRows(cmIssues).map(({ client, cm }) => (
               <tr key={cm.id}>
                 <td className="px-3 py-2 font-semibold text-slate-900">{client.name}</td>
                 <td className="px-3 py-2 text-slate-700">{cm.platform}</td>
@@ -1011,6 +1504,43 @@ function CreditMonitoringSection({
           </tbody>
         </table>
       </div>
+      <div className="flex items-center justify-between text-sm text-slate-600 mt-3">
+        <div>
+          Page {page + 1} of {Math.max(1, Math.ceil(cmIssues.length / pageSize))}
+        </div>
+        <div className="flex items-center gap-2">
+          <select
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+            value={pageSize}
+            onChange={(e) => {
+              setPageSize(Number(e.target.value));
+              setPage(0);
+            }}
+          >
+            {[10, 20, 50].map((size) => (
+              <option key={size} value={size}>
+                {size} / page
+              </option>
+            ))}
+          </select>
+          <div className="flex items-center gap-1">
+            <button
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50"
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+            >
+              Prev
+            </button>
+            <button
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50"
+              onClick={() => setPage((p) => (p + 1 < Math.ceil(cmIssues.length / pageSize) ? p + 1 : p))}
+              disabled={page + 1 >= Math.ceil(cmIssues.length / pageSize)}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1021,12 +1551,28 @@ function UsersSection({
   onAdd,
   onEdit,
   onDelete,
+  search,
+  setSearch,
+  statusFilter,
+  setStatusFilter,
+  page,
+  setPage,
+  pageSize,
+  setPageSize,
 }: {
   users: User[];
   clients: FullClient[];
   onAdd: () => void;
   onEdit: (u: User) => void;
   onDelete: (id: string) => void;
+  search: string;
+  setSearch: (v: string) => void;
+  statusFilter: "all" | User["status"];
+  setStatusFilter: (v: "all" | User["status"]) => void;
+  page: number;
+  setPage: Dispatch<SetStateAction<number>>;
+  pageSize: number;
+  setPageSize: Dispatch<SetStateAction<number>>;
 }) {
   const stats = useMemo(() => {
     const map = new Map<string, { total: number; overdue: number; issues: number; docsPending: number }>();
@@ -1042,19 +1588,77 @@ function UsersSection({
     return map;
   }, [clients]);
 
+  const pageRows = users.slice(page * pageSize, page * pageSize + pageSize);
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="mb-3 flex items-center justify-between">
+      <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-slate-900">Users (Disputers)</h2>
           <p className="text-xs text-slate-500">Manage disputer list; client dropdown pulls from here.</p>
         </div>
-        <button
-          className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800"
-          onClick={onAdd}
-        >
-          + Add User
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <input
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            placeholder="Search users..."
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(0);
+            }}
+          />
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value as typeof statusFilter);
+              setPage(0);
+            }}
+          >
+            <option value="all">Any status</option>
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+          </select>
+          <button
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            onClick={() =>
+              exportRowsCsv(
+                users.map((u) => ({
+                  name: u.name,
+                  email: u.email,
+                  role: u.role,
+                  status: u.status,
+                })),
+                "users.csv",
+              )
+            }
+          >
+            Export CSV
+          </button>
+          <button
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            onClick={() =>
+              exportRowsXls(
+                users.map((u) => ({
+                  name: u.name,
+                  email: u.email,
+                  role: u.role,
+                  status: u.status,
+                })),
+                "users.xlsx",
+                "Users",
+              )
+            }
+          >
+            Export XLS
+          </button>
+          <button
+            className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800"
+            onClick={onAdd}
+          >
+            + Add User
+          </button>
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
@@ -1069,7 +1673,7 @@ function UsersSection({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {users.map((u) => {
+            {pageRows.map((u) => {
               const stat = stats.get(u.name) || { total: 0, overdue: 0, issues: 0, docsPending: 0 };
               return (
                 <tr key={u.id}>
@@ -1117,6 +1721,43 @@ function UsersSection({
           </tbody>
         </table>
       </div>
+      <div className="flex items-center justify-between text-sm text-slate-600 mt-3">
+        <div>
+          Page {page + 1} of {Math.max(1, Math.ceil(users.length / pageSize))}
+        </div>
+        <div className="flex items-center gap-2">
+          <select
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+            value={pageSize}
+            onChange={(e) => {
+              setPageSize(Number(e.target.value));
+              setPage(0);
+            }}
+          >
+            {[10, 20, 50].map((size) => (
+              <option key={size} value={size}>
+                {size} / page
+              </option>
+            ))}
+          </select>
+          <div className="flex items-center gap-1">
+            <button
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50"
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+            >
+              Prev
+            </button>
+            <button
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50"
+              onClick={() => setPage((p) => (p + 1 < Math.ceil(users.length / pageSize) ? p + 1 : p))}
+              disabled={page + 1 >= Math.ceil(users.length / pageSize)}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1128,6 +1769,7 @@ function ClientModal({
   form,
   setForm,
   disputers,
+  busy,
 }: {
   open: boolean;
   onClose: () => void;
@@ -1135,6 +1777,7 @@ function ClientModal({
   form: { name: string; disputer: string; status: ClientProfile["status"]; round: number };
   setForm: (f: { name: string; disputer: string; status: ClientProfile["status"]; round: number }) => void;
   disputers: string[];
+  busy: boolean;
 }) {
   return (
     <Modal title="Client" open={open} onClose={onClose}>
@@ -1198,6 +1841,7 @@ function ClientModal({
           <button
             className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600"
             onClick={onSave}
+            disabled={busy}
           >
             Save
           </button>
@@ -1213,12 +1857,14 @@ function UserModal({
   onSave,
   form,
   setForm,
+  busy,
 }: {
   open: boolean;
   onClose: () => void;
   onSave: () => void;
   form: { name: string; email: string; role: string; status: User["status"] };
   setForm: (f: { name: string; email: string; role: string; status: User["status"] }) => void;
+  busy: boolean;
 }) {
   return (
     <Modal title="User" open={open} onClose={onClose}>
@@ -1271,6 +1917,7 @@ function UserModal({
           <button
             className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600"
             onClick={onSave}
+            disabled={busy}
           >
             Save
           </button>
@@ -1287,6 +1934,7 @@ function IssueModal({
   form,
   setForm,
   clients,
+  busy,
 }: {
   open: boolean;
   onClose: () => void;
@@ -1294,6 +1942,7 @@ function IssueModal({
   form: { clientId: string; issueType: string; note: string; messageSent: boolean; messageDate: string | null; resolved: boolean };
   setForm: (f: { clientId: string; issueType: string; note: string; messageSent: boolean; messageDate: string | null; resolved: boolean }) => void;
   clients: FullClient[];
+  busy: boolean;
 }) {
   return (
     <Modal title="Issue" open={open} onClose={onClose}>
@@ -1361,7 +2010,7 @@ function IssueModal({
           <button className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" onClick={onClose}>
             Cancel
           </button>
-          <button className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600" onClick={onSave}>
+          <button className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600" onClick={onSave} disabled={busy}>
             Save
           </button>
         </div>
@@ -1377,6 +2026,7 @@ function DocModal({
   form,
   setForm,
   clients,
+  busy,
 }: {
   open: boolean;
   onClose: () => void;
@@ -1384,6 +2034,7 @@ function DocModal({
   form: { clientId: string; docType: string; status: DocRecord["status"]; category: DocRecord["category"]; messageSent: boolean; messageDate: string | null; note: string };
   setForm: (f: { clientId: string; docType: string; status: DocRecord["status"]; category: DocRecord["category"]; messageSent: boolean; messageDate: string | null; note: string }) => void;
   clients: FullClient[];
+  busy: boolean;
 }) {
   return (
     <Modal title="Document" open={open} onClose={onClose}>
@@ -1469,7 +2120,7 @@ function DocModal({
           <button className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" onClick={onClose}>
             Cancel
           </button>
-          <button className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600" onClick={onSave}>
+          <button className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600" onClick={onSave} disabled={busy}>
             Save
           </button>
         </div>
@@ -1485,6 +2136,7 @@ function CmModal({
   form,
   setForm,
   clients,
+  busy,
 }: {
   open: boolean;
   onClose: () => void;
@@ -1492,6 +2144,7 @@ function CmModal({
   form: { clientId: string; platform: string; issue: string; messageSent: boolean; messageDate: string | null; resolved: boolean };
   setForm: (f: { clientId: string; platform: string; issue: string; messageSent: boolean; messageDate: string | null; resolved: boolean }) => void;
   clients: FullClient[];
+  busy: boolean;
 }) {
   return (
     <Modal title="Credit Monitoring" open={open} onClose={onClose}>
@@ -1560,7 +2213,7 @@ function CmModal({
           <button className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" onClick={onClose}>
             Cancel
           </button>
-          <button className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600" onClick={onSave}>
+          <button className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600" onClick={onSave} disabled={busy}>
             Save
           </button>
         </div>
