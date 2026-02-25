@@ -81,13 +81,21 @@ const ISSUE_FLAG_COLORS: Record<IssueFlag, string> = {
 
 const ISSUE_FLAG_OPTIONS: IssueFlag[] = ["None", "IDIQ", "ID", "FTC Code", "Payment", "DO NOT PROCESS", "Completed :)", "Paused", "Proof of Address", "SSC"];
 
-export function Dashboard({ initialClients, initialUsers }: { initialClients: FullClient[]; initialUsers: User[] }) {
+export function Dashboard({
+  initialClients,
+  initialUsers,
+  initialTab,
+}: {
+  initialClients: FullClient[];
+  initialUsers: User[];
+  initialTab?: "overview" | "clients" | "ready" | "disputes" | "issues" | "docs" | "cm" | "users";
+}) {
   const [clients, setClients] = useState<FullClient[]>(initialClients);
   const [users, setUsers] = useState<User[]>(initialUsers);
   const [search, setSearch] = useState("");
   const [disputerFilter, setDisputerFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [activeTab, setActiveTab] = useState<"overview" | "clients" | "ready" | "disputes" | "issues" | "docs" | "cm" | "users">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "clients" | "ready" | "disputes" | "issues" | "docs" | "cm" | "users">(initialTab || "overview");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -654,8 +662,8 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
       <nav className="sticky top-6 hidden h-fit min-w-[210px] flex-col gap-2 rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm md:flex">
         <p className="px-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Navigation</p>
         {[
-          { id: "overview", label: "Dashboard", icon: LayoutDashboard },
-          { id: "clients", label: "Client Management", icon: ClipboardList },
+          { id: "overview", label: "Dashboard", icon: LayoutDashboard, href: "/" },
+          { id: "clients", label: "Client Management", icon: ClipboardList, href: "/clients" },
           { id: "ready", label: "Ready to Process", icon: ListChecks },
           { id: "disputes", label: "Disputes", icon: ListChecks },
           { id: "issues", label: "Dues with Issues", icon: Bug },
@@ -668,7 +676,13 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
           return (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id as typeof activeTab)}
+              onClick={() => {
+                if (item.href && typeof window !== "undefined" && item.id !== "ready") {
+                  window.location.href = item.href;
+                } else {
+                  setActiveTab(item.id as typeof activeTab);
+                }
+              }}
               className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition ${
                 active ? "bg-slate-900 text-white shadow" : "text-slate-700 hover:bg-slate-100"
               }`}
@@ -748,13 +762,13 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
         </>
       )}
 
-      {/* Ready Queue */}
+      {/* Ready / Processing Tracker */}
       {activeTab === "ready" && (
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-slate-900">Ready to Process Queue</h2>
-              <span className="text-sm text-slate-500">Click “Mark Processed” to advance round & due date</span>
+              <h2 className="text-lg font-semibold text-slate-900">Processing Tracker</h2>
+              <span className="text-sm text-slate-500">Disputer, Client, Round, Dates, Notes, ISSUES?</span>
             </div>
             <div className="flex flex-wrap gap-2">
               <input
@@ -766,207 +780,39 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
                   setReadyPage(0);
                 }}
               />
-              <button
-                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-              onClick={() =>
-                exportRowsCsv(
-                  filteredReady.map((c) => ({
-                    processed: c.dateProcessed,
-                    client: c.name,
-                    disputer: c.disputer,
-                    issueFlag: c.issueFlag,
-                    due: c.nextDueDate,
-                    round: c.round,
-                    isNew: c.isNew,
-                    notes: c.notes,
-                    dateProcessed: c.dateProcessed,
-                  })),
-                  "ready-queue.csv",
-                )
-              }
-            >
-                Export CSV
-              </button>
-              <button
-                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-              onClick={() =>
-                exportRowsXls(
-                  filteredReady.map((c) => ({
-                    processed: c.dateProcessed,
-                    client: c.name,
-                    disputer: c.disputer,
-                    issueFlag: c.issueFlag,
-                    due: c.nextDueDate,
-                    round: c.round,
-                    isNew: c.isNew,
-                    notes: c.notes,
-                    dateProcessed: c.dateProcessed,
-                  })),
-                  "ready-queue.xlsx",
-                  "Ready",
-                )
-              }
-              >
-                Export XLS
-              </button>
+              <ExportButtons rows={filteredReady} />
             </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200">
-              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="px-3 py-2 text-left">Processed</th>
-                  <th className="px-3 py-2 text-left">Disputer</th>
-                  <th
-                    className="px-3 py-2 text-left cursor-pointer"
-                    onClick={() =>
-                      setReadySort((prev) => ({
-                        field: "name",
-                        dir: prev.field === "name" && prev.dir === "asc" ? "desc" : "asc",
-                      }))
-                    }
-                  >
-                    Client {readySort.field === "name" ? (readySort.dir === "asc" ? "↑" : "↓") : ""}
-                  </th>
-                  <th
-                    className="px-3 py-2 text-left cursor-pointer"
-                    onClick={() =>
-                      setReadySort((prev) => ({
-                        field: "round",
-                        dir: prev.field === "round" && prev.dir === "asc" ? "desc" : "asc",
-                      }))
-                    }
-                  >
-                    Current Round {readySort.field === "round" ? (readySort.dir === "asc" ? "↑" : "↓") : ""}
-                  </th>
-                  <th className="px-3 py-2 text-left">Date Processed</th>
-                  <th
-                    className="px-3 py-2 text-left cursor-pointer"
-                    onClick={() =>
-                      setReadySort((prev) => ({
-                        field: "due",
-                        dir: prev.field === "due" && prev.dir === "asc" ? "desc" : "asc",
-                      }))
-                    }
-                  >
-                    Next Round Due {readySort.field === "due" ? (readySort.dir === "asc" ? "↑" : "↓") : ""}
-                  </th>
-                  <th className="px-3 py-2 text-left">Notes/Remarks</th>
-                  <th className="px-3 py-2 text-left">ISSUES?</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {paginate(filteredReady, readyPage, readyPageSize).map((c) => (
-                  <tr key={c.id} className="hover:bg-slate-50">
-                    <td className="px-3 py-2 text-sm">
-                      {c.dateProcessed ? (
-                        <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">Processed</span>
-                      ) : (
-                        <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">Pending</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-sm text-slate-700">{c.disputer || ""}</td>
-                    <td className="px-3 py-2 text-sm font-semibold text-slate-900">{c.name}</td>
-                    <td className="px-3 py-2 text-sm text-slate-700">{c.round}</td>
-                    <td className="px-3 py-2 text-sm text-slate-700">{formatDate(c.dateProcessed)}</td>
-                    <td className="px-3 py-2 text-sm text-slate-700">{formatDate(c.nextDueDate)}</td>
-                    <td className="px-3 py-2 text-sm text-slate-700">{c.notes || "—"}</td>
-                    <td className="px-3 py-2 text-sm">
-                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${ISSUE_FLAG_COLORS[c.issueFlag]}`}>
-                        {c.issueFlag}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-right space-y-2">
-                      {blockersForClient(c).length === 0 ? (
-                        <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">Ready</span>
-                      ) : (
-                        <div className="flex flex-col text-xs text-amber-700">
-                          <span className="rounded-full bg-amber-50 px-2 py-1 font-semibold">Blocked</span>
-                          <span>{blockersForClient(c)[0]}</span>
-                        </div>
-                      )}
-                      <button
-                        className="inline-flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-emerald-600"
-                        onClick={() => handleProcessed(c.id)}
-                        disabled={busy || c.issueFlag === "DO NOT PROCESS"}
-                        title={c.issueFlag === "DO NOT PROCESS" ? "Flagged DO NOT PROCESS" : undefined}
-                      >
-                        <Check size={14} /> Mark Processed
-                      </button>
-                      <button
-                        className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-slate-800 disabled:opacity-50"
-                        disabled={blockersForClient(c).length > 0 || busy || c.issueFlag === "DO NOT PROCESS"}
-                        onClick={() => {
-                          setEditingDispute(null);
-                          setDisputeForm({
-                            clientId: c.id,
-                            bureau: "Experian",
-                            status: "Draft",
-                            round: c.round || 1,
-                            priority: "Medium",
-                            sentDate: null,
-                            dueDate: c.nextDueDate || null,
-                            notes: "",
-                            blockerFlags: blockersForClient(c).join(", "),
-                          });
-                          setDisputeModalOpen(true);
-                        }}
-                      >
-                        Start Dispute
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {filteredReady.length === 0 && (
-                  <tr>
-                    <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={9}>
-                      No clients in queue.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex items-center justify-between text-sm text-slate-600 mt-3">
-            <div>
-              Page {readyPage + 1} of {Math.max(1, Math.ceil(filteredReady.length / readyPageSize))}
-            </div>
-            <div className="flex items-center gap-2">
-              <select
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-                value={readyPageSize}
-                onChange={(e) => {
-                  setReadyPageSize(Number(e.target.value));
-                  setReadyPage(0);
-                }}
-              >
-                {[10, 20, 50].map((size) => (
-                  <option key={size} value={size}>
-                    {size} / page
-                  </option>
-                ))}
-              </select>
-              <div className="flex items-center gap-1">
-                <button
-                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50"
-                  onClick={() => setReadyPage((p) => Math.max(0, p - 1))}
-                  disabled={readyPage === 0}
-                >
-                  Prev
-                </button>
-                <button
-                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50"
-                  onClick={() =>
-                    setReadyPage((p) => (p + 1 < Math.ceil(filteredReady.length / readyPageSize) ? p + 1 : p))
-                  }
-                  disabled={readyPage + 1 >= Math.ceil(filteredReady.length / readyPageSize)}
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-          </div>
+          <ProcessingTable
+            rows={paginate(filteredReady, readyPage, readyPageSize)}
+            total={filteredReady.length}
+            page={readyPage}
+            pageSize={readyPageSize}
+            onPageChange={setReadyPage}
+            onPageSizeChange={(v) => {
+              setReadyPageSize(v);
+              setReadyPage(0);
+            }}
+            onSortChange={setReadySort}
+            sort={readySort}
+            onMarkProcessed={handleProcessed}
+            onStartDispute={(c) => {
+              setEditingDispute(null);
+              setDisputeForm({
+                clientId: c.id,
+                bureau: "Experian",
+                status: "Draft",
+                round: c.round || 1,
+                priority: "Medium",
+                sentDate: null,
+                dueDate: c.nextDueDate || null,
+                notes: "",
+                blockerFlags: blockersForClient(c).join(", "),
+              });
+              setDisputeModalOpen(true);
+            }}
+            busy={busy}
+          />
         </section>
       )}
 
@@ -1636,6 +1482,43 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
               }}
             />
           </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slate-900">Processing Tracker</h2>
+              <ExportButtons rows={filteredReady} />
+            </div>
+            <ProcessingTable
+              rows={paginate(filteredReady, readyPage, readyPageSize)}
+              total={filteredReady.length}
+              page={readyPage}
+              pageSize={readyPageSize}
+              onPageChange={setReadyPage}
+              onPageSizeChange={(v) => {
+                setReadyPageSize(v);
+                setReadyPage(0);
+              }}
+              sort={readySort}
+              onSortChange={setReadySort}
+              onMarkProcessed={handleProcessed}
+              onStartDispute={(c) => {
+                setEditingDispute(null);
+                setDisputeForm({
+                  clientId: c.id,
+                  bureau: "Experian",
+                  status: "Draft",
+                  round: c.round || 1,
+                  priority: "Medium",
+                  sentDate: null,
+                  dueDate: c.nextDueDate || null,
+                  notes: "",
+                  blockerFlags: blockersForClient(c).join(", "),
+                });
+                setDisputeModalOpen(true);
+              }}
+              busy={busy}
+            />
+          </div>
         </section>
       )}
       <ClientModal
@@ -1717,6 +1600,171 @@ export function Dashboard({ initialClients, initialUsers }: { initialClients: Fu
 type DocWithClient = { client: FullClient; doc: DocRecord };
 type CmWithClient = { client: FullClient; cm: CreditMonitoringRecord };
 
+function ProcessingTable({
+  rows,
+  total,
+  page,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
+  sort,
+  onSortChange,
+  onMarkProcessed,
+  onStartDispute,
+  busy,
+}: {
+  rows: FullClient[];
+  total: number;
+  page: number;
+  pageSize: number;
+  onPageChange: Dispatch<SetStateAction<number>>;
+  onPageSizeChange: (v: number) => void;
+  sort: { field: "due" | "name" | "round"; dir: "asc" | "desc" };
+  onSortChange: Dispatch<SetStateAction<{ field: "due" | "name" | "round"; dir: "asc" | "desc" }>>;
+  onMarkProcessed: (id: string) => void;
+  onStartDispute: (c: FullClient) => void;
+  busy: boolean;
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-slate-200">
+        <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+          <tr>
+            <th className="px-3 py-2 text-left">Processed</th>
+            <th className="px-3 py-2 text-left">Disputer</th>
+            <th
+              className="px-3 py-2 text-left cursor-pointer"
+              onClick={() =>
+                onSortChange((prev) => ({
+                  field: "name",
+                  dir: prev.field === "name" && prev.dir === "asc" ? "desc" : "asc",
+                }))
+              }
+            >
+              Client {sort.field === "name" ? (sort.dir === "asc" ? "↑" : "↓") : ""}
+            </th>
+            <th
+              className="px-3 py-2 text-left cursor-pointer"
+              onClick={() =>
+                onSortChange((prev) => ({
+                  field: "round",
+                  dir: prev.field === "round" && prev.dir === "asc" ? "desc" : "asc",
+                }))
+              }
+            >
+              Current Round {sort.field === "round" ? (sort.dir === "asc" ? "↑" : "↓") : ""}
+            </th>
+            <th className="px-3 py-2 text-left">Date Processed</th>
+            <th
+              className="px-3 py-2 text-left cursor-pointer"
+              onClick={() =>
+                onSortChange((prev) => ({
+                  field: "due",
+                  dir: prev.field === "due" && prev.dir === "asc" ? "desc" : "asc",
+                }))
+              }
+            >
+              Next Round Due {sort.field === "due" ? (sort.dir === "asc" ? "↑" : "↓") : ""}
+            </th>
+            <th className="px-3 py-2 text-left">Notes/Remarks</th>
+            <th className="px-3 py-2 text-left">ISSUES?</th>
+            <th className="px-3 py-2" />
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((c) => (
+            <tr key={c.id} className="hover:bg-slate-50">
+              <td className="px-3 py-2 text-sm">
+                {c.dateProcessed ? (
+                  <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">Processed</span>
+                ) : (
+                  <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">Pending</span>
+                )}
+              </td>
+              <td className="px-3 py-2 text-sm text-slate-700">{c.disputer || ""}</td>
+              <td className="px-3 py-2 text-sm font-semibold text-slate-900">{c.name}</td>
+              <td className="px-3 py-2 text-sm text-slate-700">{c.round}</td>
+              <td className="px-3 py-2 text-sm text-slate-700">{formatDate(c.dateProcessed)}</td>
+              <td className="px-3 py-2 text-sm text-slate-700">{formatDate(c.nextDueDate)}</td>
+              <td className="px-3 py-2 text-sm text-slate-700">{c.notes || "—"}</td>
+              <td className="px-3 py-2 text-sm">
+                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${ISSUE_FLAG_COLORS[c.issueFlag]}`}>
+                  {c.issueFlag}
+                </span>
+              </td>
+              <td className="px-3 py-2 text-right space-y-2">
+                {blockersForClient(c).length === 0 ? (
+                  <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">Ready</span>
+                ) : (
+                  <div className="flex flex-col text-xs text-amber-700">
+                    <span className="rounded-full bg-amber-50 px-2 py-1 font-semibold">Blocked</span>
+                    <span>{blockersForClient(c)[0]}</span>
+                  </div>
+                )}
+                <button
+                  className="inline-flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-emerald-600"
+                  onClick={() => onMarkProcessed(c.id)}
+                  disabled={busy || c.issueFlag === "DO NOT PROCESS"}
+                  title={c.issueFlag === "DO NOT PROCESS" ? "Flagged DO NOT PROCESS" : undefined}
+                >
+                  <Check size={14} /> Mark Processed
+                </button>
+                <button
+                  className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-slate-800 disabled:opacity-50"
+                  disabled={blockersForClient(c).length > 0 || busy || c.issueFlag === "DO NOT PROCESS"}
+                  onClick={() => onStartDispute(c)}
+                >
+                  Start Dispute
+                </button>
+              </td>
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr>
+              <td className="px-3 py-4 text-center text-sm text-slate-500" colSpan={9}>
+                No clients in queue.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      <div className="flex items-center justify-between text-sm text-slate-600 mt-3">
+        <div>
+          Page {page + 1} of {Math.max(1, Math.ceil(total / pageSize))}
+        </div>
+        <div className="flex items-center gap-2">
+          <select
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+            value={pageSize}
+            onChange={(e) => onPageSizeChange(Number(e.target.value))}
+          >
+            {[10, 20, 50].map((size) => (
+              <option key={size} value={size}>
+                {size} / page
+              </option>
+            ))}
+          </select>
+          <div className="flex items-center gap-1">
+            <button
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50"
+              onClick={() => onPageChange((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+            >
+              Prev
+            </button>
+            <button
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50"
+              onClick={() => onPageChange((p) => (p + 1 < Math.ceil(total / pageSize) ? p + 1 : p))}
+              disabled={page + 1 >= Math.ceil(total / pageSize)}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 function DocsSection({
   docs,
   onAddClick,
@@ -3126,5 +3174,50 @@ function DisputeModal({
         </div>
       </div>
     </Modal>
+  );
+}
+function ExportButtons({ rows }: { rows: FullClient[] }) {
+  return (
+    <>
+      <button
+        className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+        onClick={() =>
+          exportRowsCsv(
+            rows.map((c) => ({
+              disputer: c.disputer,
+              client: c.name,
+              round: c.round,
+              dateProcessed: c.dateProcessed,
+              nextDueDate: c.nextDueDate,
+              notes: c.notes,
+              issueFlag: c.issueFlag,
+            })),
+            "processing-tracker.csv",
+          )
+        }
+      >
+        Export CSV
+      </button>
+      <button
+        className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+        onClick={() =>
+          exportRowsXls(
+            rows.map((c) => ({
+              disputer: c.disputer,
+              client: c.name,
+              round: c.round,
+              dateProcessed: c.dateProcessed,
+              nextDueDate: c.nextDueDate,
+              notes: c.notes,
+              issueFlag: c.issueFlag,
+            })),
+            "processing-tracker.xlsx",
+            "Processing Tracker",
+          )
+        }
+      >
+        Export XLS
+      </button>
+    </>
   );
 }
