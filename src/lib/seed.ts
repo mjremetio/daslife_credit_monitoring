@@ -13,7 +13,7 @@ const toIso = (value: string | number | null): string | null => {
 
 export function seedIfEmpty() {
   ensureSchema();
-  const dbPath = path.join(process.cwd(), "data", "db.sqlite");
+  const dbPath = process.env.SQLITE_PATH || path.join(process.env.SQLITE_DIR || "/tmp/daslife_data", "db.sqlite");
   const stats = fs.statSync(dbPath, { throwIfNoEntry: false });
   if (stats && stats.size > 0) return; // already seeded or has data
 

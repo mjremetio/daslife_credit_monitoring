@@ -3,8 +3,9 @@ import fs from "fs";
 import path from "path";
 import { ClientProfile, IssueRecord, CreditMonitoringRecord, DocRecord, DocCategory, DocStatus } from "@/types/models";
 
-const dataDir = path.join(process.cwd(), "data");
-const dbPath = path.join(dataDir, "db.sqlite");
+// Use writable location for serverless (Vercel) – /tmp by default
+const dataDir = process.env.SQLITE_DIR || path.join("/tmp", "daslife_data");
+const dbPath = process.env.SQLITE_PATH || path.join(dataDir, "db.sqlite");
 
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
